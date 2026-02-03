@@ -1,4 +1,4 @@
-from flask import Flask, render_template, render_template_string, request, redirect, url_for, flash, session, jsonify
+from flask import Flask, render_template_string, request, redirect, url_for, flash, session, jsonify
 import sqlite3
 import json
 import re
@@ -8,7 +8,7 @@ import time
 import os
 from collections import Counter
 from pathlib import Path
-from typing import List
+from typing import List, Optional, Tuple
 from functools import wraps
 from datetime import datetime
 
@@ -231,6 +231,11 @@ HOME_TEMPLATE = """
               <i class="bi bi-gear me-2"></i> Automation
             </a>
           </li>
+          <li>
+            <a href="{{ url_for('settings_logs') }}" class="nav-link text-white">
+              <i class="bi bi-journal-text me-2"></i> Logs
+            </a>
+          </li>
         </ul>
         <div class="mt-auto pt-3 border-top">
           <div class="small text-muted mb-2">{{ session.get('user_email', 'User') }}</div>
@@ -252,6 +257,35 @@ HOME_TEMPLATE = """
         </div>
         {% endif %}
         <h2 class="mb-4">Overview</h2>
+        {% if twitter_status or gemini_status is not none %}
+        <div class="row g-3 mb-3">
+          <div class="col-12">
+            <div class="card shadow-sm">
+              <div class="card-body py-2">
+                <h6 class="card-title text-muted small mb-2">Connection status</h6>
+                <div class="d-flex flex-wrap gap-3">
+                  {% if twitter_status %}
+                  <span class="d-flex align-items-center">
+                    <span class="badge bg-{{ 'success' if twitter_status == 'ok' else 'danger' if twitter_status == 'error' else 'secondary' }} me-2">
+                      <i class="bi bi-twitter"></i> Twitter
+                    </span>
+                    <span class="small">{{ 'Connected' if twitter_status == 'ok' else twitter_message or 'Not connected' if twitter_status == 'error' else 'Not configured' }}</span>
+                  </span>
+                  {% endif %}
+                  {% if gemini_status is not none %}
+                  <span class="d-flex align-items-center">
+                    <span class="badge bg-{{ 'success' if gemini_status == 'ok' else 'warning' if gemini_status == 'configured' else 'secondary' }} me-2">
+                      <i class="bi bi-robot"></i> Gemini
+                    </span>
+                    <span class="small">{{ 'AI replies on' if gemini_status == 'ok' else 'Configured (off)' if gemini_status == 'configured' else 'Not configured' }}</span>
+                  </span>
+                  {% endif %}
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+        {% endif %}
         <div class="row g-3 mb-4">
           <div class="col-md-3">
             <div class="card shadow-sm">
@@ -376,6 +410,16 @@ CREDENTIALS_TEMPLATE = """
           <li>
             <a href="{{ url_for('settings_credentials') }}" class="nav-link text-white active">
               <i class="bi bi-person-badge me-2"></i> Credentials
+            </a>
+          </li>
+          <li>
+            <a href="{{ url_for('settings_automation') }}" class="nav-link text-white">
+              <i class="bi bi-gear me-2"></i> Automation
+            </a>
+          </li>
+          <li>
+            <a href="{{ url_for('settings_logs') }}" class="nav-link text-white">
+              <i class="bi bi-journal-text me-2"></i> Logs
             </a>
           </li>
         </ul>
@@ -791,6 +835,11 @@ AUTOMATION_TEMPLATE = """
               <i class="bi bi-gear me-2"></i> Automation
             </a>
           </li>
+          <li>
+            <a href="{{ url_for('settings_logs') }}" class="nav-link text-white">
+              <i class="bi bi-journal-text me-2"></i> Logs
+            </a>
+          </li>
         </ul>
         <div class="mt-auto pt-3 border-top">
           <div class="small text-muted mb-2">{{ session.get('user_email', 'User') }}</div>
@@ -859,11 +908,60 @@ AUTOMATION_TEMPLATE = """
                       <i class="bi bi-arrow-right-circle me-1"></i>Run Once
                     </button>
                   </form>
+                  <form method="post" style="display: inline;" class="ms-2">
+                    <input type="hidden" name="action" value="run_once_preview">
+                    <button type="submit" class="btn btn-outline-info">
+                      <i class="bi bi-eye me-1"></i>Run Once (Preview)
+                    </button>
+                  </form>
                   {% endif %}
                 </div>
               </div>
             </div>
           </div>
+
+          {% if preview %}
+          <div class="card shadow-sm mb-4 border-info">
+            <div class="card-body">
+              <h5 class="card-title mb-3">
+                <i class="bi bi-eye me-2"></i>Last preview (no tweets were posted)
+              </h5>
+              <p class="small text-muted mb-2">
+                Tweets fetched: {{ preview.stats.get('tweets_fetched', 0) }} &middot;
+                After filter: {{ preview.stats.get('tweets_filtered', 0) }} &middot;
+                Would post: {{ preview.stats.get('replies_posted', 0) }} replies
+              </p>
+              {% if preview.preview %}
+              <div class="table-responsive">
+                <table class="table table-sm table-hover mb-0">
+                  <thead>
+                    <tr>
+                      <th>Type</th>
+                      <th>Tweet ID</th>
+                      <th>Source</th>
+                      <th>Keyword</th>
+                      <th>Text (snippet)</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {% for item in preview.preview %}
+                    <tr>
+                      <td><span class="badge bg-{{ 'primary' if item.type == 'reply' else 'secondary' }}">{{ item.type }}</span></td>
+                      <td class="font-monospace small">{{ item.tweet_id }}</td>
+                      <td>{{ item.source or '-' }}</td>
+                      <td>{{ item.keyword or '-' }}</td>
+                      <td class="small text-break" style="max-width: 280px;">{{ (item.text or '')[:120] }}{% if (item.text or '')|length > 120 %}...{% endif %}</td>
+                    </tr>
+                    {% endfor %}
+                  </tbody>
+                </table>
+              </div>
+              {% else %}
+              <p class="mb-0 text-muted">No replies would have been posted (e.g. no candidates or all filtered out).</p>
+              {% endif %}
+            </div>
+          </div>
+          {% endif %}
 
           <!-- Schedule Settings -->
           <form method="post" class="row g-3">
@@ -1044,6 +1142,11 @@ KEYWORDS_TEMPLATE = """
               <i class="bi bi-gear me-2"></i> Automation
             </a>
           </li>
+          <li>
+            <a href="{{ url_for('settings_logs') }}" class="nav-link text-white">
+              <i class="bi bi-journal-text me-2"></i> Logs
+            </a>
+          </li>
         </ul>
         <div class="mt-auto pt-3 border-top">
           <div class="small text-muted mb-2">{{ session.get('user_email', 'User') }}</div>
@@ -1198,6 +1301,97 @@ KEYWORDS_TEMPLATE = """
 """
 
 
+LOGS_TEMPLATE = """
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Logs - X Bot</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.css" rel="stylesheet">
+    <link href="{{ url_for('static', filename='style.css') }}" rel="stylesheet">
+  </head>
+  <body>
+    <div class="mobile-topbar px-3 py-2 d-md-none">
+      <button class="btn btn-outline-light btn-sm" type="button" onclick="toggleSidebar()">
+        <i class="bi bi-list" id="navToggleIcon"></i>
+      </button>
+      <span class="fw-semibold">X Bot</span>
+    </div>
+    <div class="d-flex">
+      <nav class="sidebar bg-dark text-white p-3">
+        <h5 class="mb-4">X Bot</h5>
+        <ul class="nav nav-pills flex-column mb-auto">
+          <li class="nav-item">
+            <a href="{{ url_for('dashboard_overview') }}" class="nav-link text-white">
+              <i class="bi bi-speedometer2 me-2"></i> Overview
+            </a>
+          </li>
+          <li>
+            <a href="{{ url_for('settings_keywords') }}" class="nav-link text-white">
+              <i class="bi bi-filter-circle me-2"></i> Keywords & Filters
+            </a>
+          </li>
+          <li>
+            <a href="{{ url_for('settings_credentials') }}" class="nav-link text-white">
+              <i class="bi bi-person-badge me-2"></i> Credentials
+            </a>
+          </li>
+          <li>
+            <a href="{{ url_for('settings_automation') }}" class="nav-link text-white">
+              <i class="bi bi-gear me-2"></i> Automation
+            </a>
+          </li>
+          <li>
+            <a href="{{ url_for('settings_logs') }}" class="nav-link text-white active">
+              <i class="bi bi-journal-text me-2"></i> Logs
+            </a>
+          </li>
+        </ul>
+        <div class="mt-auto pt-3 border-top">
+          <div class="small text-muted mb-2">{{ session.get('user_email', 'User') }}</div>
+          <a href="{{ url_for('logout') }}" class="btn btn-outline-light btn-sm w-100">
+            <i class="bi bi-box-arrow-right me-1"></i> Logout
+          </a>
+        </div>
+      </nav>
+      <main class="flex-grow-1 p-4">
+        <h2 class="mb-4">Bot Logs</h2>
+        {% if log_error %}
+        <div class="alert alert-warning">{{ log_error }}</div>
+        {% else %}
+        <p class="text-muted small mb-2">Last {{ line_count }} lines from bot.log (newest at bottom)</p>
+        <div class="card shadow-sm">
+          <div class="card-body p-0">
+            <pre class="bg-dark text-light p-3 mb-0 small" style="max-height: 70vh; overflow-y: auto; white-space: pre-wrap; word-break: break-all;">{{ log_content }}</pre>
+          </div>
+        </div>
+        <div class="mt-2">
+          <a href="{{ url_for('settings_logs') }}" class="btn btn-outline-secondary btn-sm"><i class="bi bi-arrow-clockwise me-1"></i>Refresh</a>
+        </div>
+        {% endif %}
+      </main>
+    </div>
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
+    <script>
+      function toggleSidebar() {
+        var sidebar = document.querySelector('.sidebar');
+        var icon = document.getElementById('navToggleIcon');
+        if (sidebar) {
+          var isOpen = sidebar.classList.toggle('sidebar-open');
+          if (icon) {
+            icon.classList.toggle('bi-list', !isOpen);
+            icon.classList.toggle('bi-x-lg', isOpen);
+          }
+        }
+      }
+    </script>
+  </body>
+</html>
+"""
+
+
 # Initialize auth database on startup
 init_auth_db()
 
@@ -1242,6 +1436,57 @@ def logout():
     return redirect(url_for('landing'))
 
 
+@app.route("/api/run-once", methods=["GET", "POST"])
+def api_run_once():
+    """Trigger a one-off bot run (for cron). Requires CRON_SECRET in query or header X-Cron-Secret."""
+    secret = request.args.get("secret") or request.headers.get("X-Cron-Secret") or ""
+    expected = os.getenv("CRON_SECRET", "")
+    if not expected or secret != expected:
+        return jsonify({"ok": False, "error": "unauthorized"}), 401
+    with bot_status_lock:
+        if bot_status["running"]:
+            return jsonify({"ok": True, "message": "Bot already running; skip this run."}), 200
+        try:
+            bot_status["running"] = True
+            thread = threading.Thread(target=_run_bot_in_thread, daemon=True)
+            thread.start()
+            logger.info("Started bot run via /api/run-once (cron)")
+            return jsonify({"ok": True, "message": "Bot run started."}), 200
+        except Exception as e:
+            logger.error(f"Error starting run via API: {e}", exc_info=True)
+            bot_status["running"] = False
+            return jsonify({"ok": False, "error": str(e)}), 500
+
+
+def _read_log_tail(path: Path, max_lines: int = 500) -> Tuple[str, int, Optional[str]]:
+    """Read last max_lines from a text file. Returns (content, line_count, error_message)."""
+    try:
+        if not path.exists():
+            return "", 0, f"Log file not found: {path}"
+        with open(path, "r", encoding="utf-8", errors="replace") as f:
+            lines = f.readlines()
+        if not lines:
+            return "", 0, None
+        tail = lines[-max_lines:]
+        return "".join(tail), len(tail), None
+    except Exception as e:
+        return "", 0, str(e)
+
+
+@app.route("/settings/logs")
+@login_required
+def settings_logs():
+    """View last lines of bot.log."""
+    log_path = Path("bot.log")
+    log_content, line_count, log_error = _read_log_tail(log_path, max_lines=500)
+    return render_template_string(
+        LOGS_TEMPLATE,
+        log_content=log_content,
+        line_count=line_count,
+        log_error=log_error,
+    )
+
+
 @app.route("/dashboard")
 @login_required
 def dashboard_overview():
@@ -1250,15 +1495,31 @@ def dashboard_overview():
     last_reply = None
     recent_replies = []
     has_twitter = False
+    twitter_status = None  # 'ok' | 'error' | None (not configured)
+    twitter_message = None
+    gemini_status = None  # 'ok' | 'configured' | None
 
-    # Check if Twitter credentials are already stored
+    # Check Twitter and Gemini connection status
     try:
         config = Config()
         x_api = config.config.get("x_api", {})
         if any(x_api.get(k) for k in ["consumer_key", "consumer_secret", "access_token", "bearer_token"]):
             has_twitter = True
+            try:
+                xapi = XAPI(config.get_x_api_credentials())
+                user = xapi.get_user_info()
+                twitter_status = "ok" if user else "error"
+                twitter_message = None if user else "Could not verify account"
+            except Exception as e:
+                twitter_status = "error"
+                twitter_message = str(e)[:80]
+        gemini = config.config.get("gemini", {})
+        if gemini.get("api_key"):
+            gemini_status = "ok" if gemini.get("enabled") else "configured"
+        else:
+            gemini_status = None
     except Exception:
-        has_twitter = False
+        pass
 
     # Ensure database exists and has tables
     try:
@@ -1278,6 +1539,9 @@ def dashboard_overview():
                 last_reply=None,
                 recent_replies=[],
                 has_twitter=has_twitter,
+                twitter_status=twitter_status,
+                twitter_message=twitter_message,
+                gemini_status=gemini_status,
             )
         
         # Now query the database
@@ -1295,6 +1559,9 @@ def dashboard_overview():
                 last_reply=None,
                 recent_replies=[],
                 has_twitter=has_twitter,
+                twitter_status=twitter_status,
+                twitter_message=twitter_message,
+                gemini_status=gemini_status,
             )
         
         # Tables are created by Database class, no need to create here
@@ -1417,6 +1684,9 @@ def dashboard_overview():
         last_reply=last_reply,
         recent_replies=recent_replies,
         has_twitter=has_twitter,
+        twitter_status=twitter_status,
+        twitter_message=twitter_message,
+        gemini_status=gemini_status,
     )
 
 
@@ -1846,6 +2116,24 @@ def settings_automation():
                         bot_status["running"] = False
                         flash(f"Error starting bot: {str(e)}", "danger")
         
+        elif action == "run_once_preview":
+            with bot_status_lock:
+                if bot_status["running"]:
+                    flash("Bot is already running. Please stop it first to run a preview.", "warning")
+                else:
+                    try:
+                        bot = AutoReplyBot(config)
+                        stats = bot.run(dry_run=True)
+                        bot.close()
+                        session["last_preview"] = {
+                            "stats": stats,
+                            "preview": stats.get("preview") or [],
+                        }
+                        flash("Preview run completed. No tweets were posted.", "success")
+                    except Exception as e:
+                        logger.error(f"Error running preview: {e}", exc_info=True)
+                        flash(f"Preview failed: {str(e)}", "danger")
+        
         elif action == "save_schedule":
             data = config.config
             data.setdefault("schedule", {})
@@ -1899,6 +2187,8 @@ def settings_automation():
         last_run = bot_status.get("last_run")
         next_run = bot_status.get("next_run")
     
+    preview = session.pop("last_preview", None)
+    
     return render_template_string(
         AUTOMATION_TEMPLATE,
         config_error=error,
@@ -1908,6 +2198,7 @@ def settings_automation():
         bot_running=bot_running,
         last_run=last_run,
         next_run=next_run,
+        preview=preview,
     )
 
 

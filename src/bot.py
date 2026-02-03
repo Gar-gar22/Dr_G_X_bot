@@ -34,9 +34,10 @@ class AutoReplyBot:
         self.tweet_settings = config.get_tweet_settings()
         self.filters = config.get_filters()
     
-    def run(self) -> Dict[str, Any]:
-        """Execute one bot run: fetch tweets, generate replies, and post them."""
-        logger.info("Starting bot run...")
+    def run(self, dry_run: bool = False) -> Dict[str, Any]:
+        """Execute one bot run: fetch tweets, generate replies, and post them.
+        If dry_run is True, no tweets are posted and stats['preview'] contains would-be replies."""
+        logger.info("Starting bot run..." + (" (dry run)" if dry_run else ""))
         start_time = datetime.now()
         
         stats = {
@@ -44,7 +45,8 @@ class AutoReplyBot:
             "tweets_filtered": 0,
             "replies_generated": 0,
             "replies_posted": 0,
-            "errors": 0
+            "errors": 0,
+            "preview": [] if dry_run else None,
         }
         
         try:
@@ -60,6 +62,8 @@ class AutoReplyBot:
                 logger.warning("  - Rate limits preventing API calls")
                 logger.warning("  - No tweets matching keywords")
                 logger.warning("  - Timeline access restricted (403 error)")
+                if dry_run and "preview" in stats:
+                    stats["preview"] = []
                 return stats
             
             # Filter candidates
@@ -73,6 +77,8 @@ class AutoReplyBot:
                 logger.warning(f"  - Min followers: {self.filters.get('min_followers', 0)}")
                 logger.warning(f"  - Exclude retweets: {self.filters.get('exclude_retweets', True)}")
                 logger.warning(f"  - Exclude own tweets: {self.filters.get('exclude_own_tweets', True)}")
+                if dry_run and "preview" in stats:
+                    stats["preview"] = []
                 return stats
             
             # Limit to max replies per run (support 20-50 range)
@@ -126,29 +132,39 @@ class AutoReplyBot:
                         stats["replies_generated"] += 1
                         logger.info(f"Generated quote tweet for tweet {tweet['id']}: {quote_text[:50]}...")
                         
-                        # Post quote tweet
-                        quote_id = self.x_api.quote_tweet(quote_text, tweet["id"])
-                        
-                        if quote_id:
-                            try:
-                                # Mark as replied (to avoid replying again)
-                                self.db.mark_tweet_replied(
-                                    tweet["id"],
-                                    quote_id,
-                                    source=tweet.get("source", "unknown"),
-                                    keyword=tweet.get("keyword")
-                                )
-                                # Also track as quote tweet
-                                self.db.mark_quote_retweet_posted(quote_id, tweet["id"], quote_text)
-                                stats["replies_posted"] += 1
-                                logger.info(f"Successfully posted quote tweet {quote_id} and recorded in database")
-                            except Exception as db_error:
-                                logger.error(f"Failed to record quote tweet in database: {db_error}", exc_info=True)
-                                stats["replies_posted"] += 1
-                                logger.warning(f"Quote tweet {quote_id} was posted but not recorded in database.")
+                        if dry_run:
+                            stats["preview"].append({
+                                "tweet_id": tweet["id"],
+                                "type": "quote",
+                                "text": quote_text,
+                                "keyword": tweet.get("keyword"),
+                                "source": tweet.get("source", "unknown"),
+                            })
+                            stats["replies_posted"] += 1  # count as "would post"
                         else:
-                            logger.warning(f"Failed to post quote tweet to tweet {tweet['id']}")
-                            stats["errors"] += 1
+                            # Post quote tweet
+                            quote_id = self.x_api.quote_tweet(quote_text, tweet["id"])
+                            
+                            if quote_id:
+                                try:
+                                    # Mark as replied (to avoid replying again)
+                                    self.db.mark_tweet_replied(
+                                        tweet["id"],
+                                        quote_id,
+                                        source=tweet.get("source", "unknown"),
+                                        keyword=tweet.get("keyword")
+                                    )
+                                    # Also track as quote tweet
+                                    self.db.mark_quote_retweet_posted(quote_id, tweet["id"], quote_text)
+                                    stats["replies_posted"] += 1
+                                    logger.info(f"Successfully posted quote tweet {quote_id} and recorded in database")
+                                except Exception as db_error:
+                                    logger.error(f"Failed to record quote tweet in database: {db_error}", exc_info=True)
+                                    stats["replies_posted"] += 1
+                                    logger.warning(f"Quote tweet {quote_id} was posted but not recorded in database.")
+                            else:
+                                logger.warning(f"Failed to post quote tweet to tweet {tweet['id']}")
+                                stats["errors"] += 1
                     else:
                         # Regular reply
                         reply_text = self.reply_generator.generate_reply(
@@ -164,31 +180,41 @@ class AutoReplyBot:
                         stats["replies_generated"] += 1
                         logger.info(f"Generated reply for tweet {tweet['id']}: {reply_text[:50]}...")
                         
-                        # Post reply
-                        reply_id = self.x_api.post_reply(reply_text, tweet["id"])
-                        
-                        if reply_id:
-                            try:
-                                self.db.mark_tweet_replied(
-                                    tweet["id"],
-                                    reply_id,
-                                    source=tweet.get("source", "unknown"),
-                                    keyword=tweet.get("keyword")
-                                )
-                                stats["replies_posted"] += 1
-                                logger.info(f"Successfully posted reply {reply_id} and recorded in database")
-                            except Exception as db_error:
-                                # Log the database error but don't fail the whole operation
-                                # The reply was posted to Twitter, so we still count it
-                                logger.error(f"Failed to record reply in database: {db_error}", exc_info=True)
-                                stats["replies_posted"] += 1
-                                logger.warning(f"Reply {reply_id} was posted but not recorded in database. This may cause duplicate replies.")
+                        if dry_run:
+                            stats["preview"].append({
+                                "tweet_id": tweet["id"],
+                                "type": "reply",
+                                "text": reply_text,
+                                "keyword": tweet.get("keyword"),
+                                "source": tweet.get("source", "unknown"),
+                            })
+                            stats["replies_posted"] += 1  # count as "would post"
                         else:
-                            logger.warning(f"Failed to post reply to tweet {tweet['id']}")
-                            stats["errors"] += 1
+                            # Post reply
+                            reply_id = self.x_api.post_reply(reply_text, tweet["id"])
+                            
+                            if reply_id:
+                                try:
+                                    self.db.mark_tweet_replied(
+                                        tweet["id"],
+                                        reply_id,
+                                        source=tweet.get("source", "unknown"),
+                                        keyword=tweet.get("keyword")
+                                    )
+                                    stats["replies_posted"] += 1
+                                    logger.info(f"Successfully posted reply {reply_id} and recorded in database")
+                                except Exception as db_error:
+                                    # Log the database error but don't fail the whole operation
+                                    # The reply was posted to Twitter, so we still count it
+                                    logger.error(f"Failed to record reply in database: {db_error}", exc_info=True)
+                                    stats["replies_posted"] += 1
+                                    logger.warning(f"Reply {reply_id} was posted but not recorded in database. This may cause duplicate replies.")
+                            else:
+                                logger.warning(f"Failed to post reply to tweet {tweet['id']}")
+                                stats["errors"] += 1
                     
-                    # Delay between replies - spread evenly over 30-40 minutes
-                    if idx < len(selected) - 1:  # Don't delay after last reply
+                    # Delay between replies - skip in dry run
+                    if not dry_run and idx < len(selected) - 1:  # Don't delay after last reply
                         # Calculate delay with some randomness
                         base_delay = time_per_reply
                         # Add randomness: ±20% variation
@@ -210,7 +236,8 @@ class AutoReplyBot:
             
             duration = (datetime.now() - start_time).total_seconds()
             logger.info(f"Bot run completed in {duration:.1f} seconds. Stats: {stats}")
-            
+            if dry_run and "preview" in stats and stats["preview"] is None:
+                stats["preview"] = []
             return stats
         
         except Exception as e:

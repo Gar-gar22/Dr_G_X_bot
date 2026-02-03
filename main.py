@@ -90,7 +90,7 @@ def main():
     
     except FileNotFoundError as e:
         logger.error(f"Configuration error: {e}")
-        logger.error("Please create config.json from config.json.example and fill in your credentials.")
+        logger.error("Please create config.json or run python setup.py to configure credentials.")
         sys.exit(1)
     except Exception as e:
         logger.error(f"Fatal error: {e}", exc_info=True)

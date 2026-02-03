@@ -21,16 +21,41 @@ class Config:
         self.load_from_database()
         self.override_with_env()
     
+    def _default_config(self) -> Dict[str, Any]:
+        """Return minimal default config so app can start (e.g. on first deploy)."""
+        return {
+            "x_api": {},
+            "gemini": {"enabled": False},
+            "keywords": [],
+            "schedule": {
+                "morning_time": "09:00",
+                "evening_time": "18:00",
+                "morning_start": "09:00",
+                "morning_end": "11:00",
+                "evening_start": "18:00",
+                "evening_end": "20:00",
+                "timezone": "UTC",
+            },
+            "reply_settings": {
+                "max_replies_per_run": 10,
+                "min_replies_per_run": 5,
+                "delay_minutes_min": 5,
+                "delay_minutes_max": 15,
+            },
+            "filters": {"exclude_retweets": True, "exclude_own_tweets": True, "min_followers": 0},
+            "tweet_settings": {"enabled": True, "tweets_per_run": 1, "threads_per_run": 0, "thread_tweet_count": 3},
+        }
+
     def load_config(self) -> None:
-        """Load configuration from JSON file."""
+        """Load configuration from JSON file. Creates default if missing (for first deploy)."""
         if self.config_path.exists():
             with open(self.config_path, 'r', encoding='utf-8') as f:
                 self.config = json.load(f)
         else:
-            raise FileNotFoundError(
-                f"Configuration file not found: {self.config_path}\n"
-                f"Please copy config.json.example to config.json and fill in your credentials."
-            )
+            self.config = self._default_config()
+            self.config_path.parent.mkdir(parents=True, exist_ok=True)
+            with open(self.config_path, 'w', encoding='utf-8') as f:
+                json.dump(self.config, f, indent=2)
     
     def load_from_database(self) -> None:
         """Load API credentials from database if available."""

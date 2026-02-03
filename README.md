@@ -52,7 +52,7 @@ pip install -r requirements.txt
    This will guide you through configuring all settings interactively.
    
    **Method B: Manual Setup**
-   - Copy `config.json.example` to `config.json`
+   - Create `config.json` (e.g. run `python setup.py`)
    - Fill in your X API credentials
    - Configure keywords, schedules, and other settings
    - (Optional) Add OpenAI API key if you want AI-generated replies
