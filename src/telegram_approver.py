@@ -1,8 +1,10 @@
 """Telegram man-in-the-loop: notify, approve/edit/reject, and photo+tip compose."""
 import asyncio
+import hashlib
 import logging
 import os
 import threading
+import time
 from datetime import datetime
 from typing import Any, Dict, Optional
 
@@ -10,6 +12,22 @@ from dotenv import load_dotenv
 
 load_dotenv()
 logger = logging.getLogger(__name__)
+
+_PLACEHOLDER_TOKENS = {
+    "",
+    "your_telegram_bot_token",
+    "changeme",
+    "change-me",
+}
+_PLACEHOLDER_CHAT_IDS = {
+    "",
+    "your_telegram_chat_id",
+    "changeme",
+}
+
+# Process-local guard (gunicorn reload / double import)
+_polling_start_lock = threading.Lock()
+_polling_started = False
 
 
 class DraftPoster:
@@ -302,10 +320,99 @@ class TelegramApprover:
         self._media_group_buf: Dict[str, Dict[str, Any]] = {}
         self._media_group_lock = threading.Lock()
         self._loop = None
+        self._lock_conn = None  # holds Postgres advisory lock while polling
 
     @property
     def enabled(self) -> bool:
-        return bool(self.token and self.chat_id)
+        token = (self.token or "").strip()
+        chat = (self.chat_id or "").strip()
+        if token.lower() in _PLACEHOLDER_TOKENS or ":" not in token:
+            return False
+        if chat.lower() in _PLACEHOLDER_CHAT_IDS:
+            return False
+        return True
+
+    def _polling_lock_id(self) -> int:
+        """Stable 31-bit key so only one process polls this bot token."""
+        digest = hashlib.sha256(self.token.encode("utf-8")).hexdigest()
+        return int(digest[:8], 16) % (2**31 - 1)
+
+    def _try_acquire_polling_lock(self) -> bool:
+        """
+        Take a session-level Postgres advisory lock.
+        Prevents Render deploy overlap (old + new dyno) from dual getUpdates.
+        """
+        if os.getenv("TELEGRAM_SKIP_LOCK", "").lower() in ("1", "true", "yes"):
+            return True
+        try:
+            import psycopg2
+            from psycopg2.extras import RealDictCursor
+
+            database_url = (os.getenv("DATABASE_URL") or "").strip()
+            if database_url.startswith("postgres://"):
+                database_url = "postgresql://" + database_url[len("postgres://") :]
+            sslmode = (os.getenv("DB_SSLMODE") or "").strip() or None
+            if database_url:
+                if sslmode and "sslmode=" not in database_url.lower():
+                    sep = "&" if "?" in database_url else "?"
+                    database_url = f"{database_url}{sep}sslmode={sslmode}"
+                conn = psycopg2.connect(
+                    dsn=database_url,
+                    cursor_factory=RealDictCursor,
+                    connect_timeout=10,
+                )
+            else:
+                kwargs = {
+                    "host": os.getenv("DB_HOST", "localhost"),
+                    "port": int(os.getenv("DB_PORT", "5432")),
+                    "user": os.getenv("DB_USER", "postgres"),
+                    "password": os.getenv("DB_PASSWORD", "") or "",
+                    "dbname": os.getenv("DB_NAME", "twitter"),
+                    "cursor_factory": RealDictCursor,
+                    "connect_timeout": 10,
+                }
+                if sslmode:
+                    kwargs["sslmode"] = sslmode
+                conn = psycopg2.connect(**kwargs)
+
+            conn.autocommit = True
+            cur = conn.cursor()
+            cur.execute(
+                "SELECT pg_try_advisory_lock(%s) AS locked",
+                (self._polling_lock_id(),),
+            )
+            row = cur.fetchone()
+            cur.close()
+            locked = bool(row and row.get("locked"))
+            if not locked:
+                conn.close()
+                logger.warning(
+                    "Telegram polling lock held by another process — "
+                    "skipping getUpdates (normal during Render redeploy)"
+                )
+                return False
+            self._lock_conn = conn
+            logger.info("Acquired Telegram polling advisory lock")
+            return True
+        except Exception as e:
+            # If DB lock fails, still allow polling (local without PG, etc.)
+            logger.warning(f"Telegram polling lock unavailable ({e}); starting anyway")
+            return True
+
+    def _release_polling_lock(self) -> None:
+        if not self._lock_conn:
+            return
+        try:
+            cur = self._lock_conn.cursor()
+            cur.execute(
+                "SELECT pg_advisory_unlock(%s)",
+                (self._polling_lock_id(),),
+            )
+            cur.close()
+            self._lock_conn.close()
+        except Exception:
+            pass
+        self._lock_conn = None
 
     def _authorized_chat(self, chat_id) -> bool:
         return str(chat_id) == str(self.chat_id)
@@ -624,18 +731,49 @@ class TelegramApprover:
                 pass
 
     def start_polling(self) -> bool:
-        """Start Telegram long-polling in a daemon thread."""
+        """Start Telegram long-polling in a daemon thread (at most one process)."""
+        global _polling_started
+
         if not self.enabled:
             logger.warning(
-                "Telegram approver disabled (missing TELEGRAM_BOT_TOKEN/CHAT_ID)"
+                "Telegram approver disabled (missing/invalid TELEGRAM_BOT_TOKEN/CHAT_ID)"
             )
             return False
-        if self._thread and self._thread.is_alive():
-            return True
+        if os.getenv("TELEGRAM_POLLING", "true").lower() in ("0", "false", "no", "off"):
+            logger.info("Telegram polling disabled via TELEGRAM_POLLING=false")
+            return False
+
+        with _polling_start_lock:
+            if _polling_started or (self._thread and self._thread.is_alive()):
+                logger.info("Telegram polling already running in this process")
+                return True
+            _polling_started = True
 
         def _run():
+            global _polling_started
             try:
+                retries = int(os.getenv("TELEGRAM_LOCK_RETRIES", "12"))
+                delay = float(os.getenv("TELEGRAM_LOCK_RETRY_SECONDS", "10"))
+                acquired = False
+                for attempt in range(max(1, retries)):
+                    if self._try_acquire_polling_lock():
+                        acquired = True
+                        break
+                    logger.info(
+                        f"Waiting for Telegram polling lock ({attempt + 1}/{retries})…"
+                    )
+                    time.sleep(delay)
+                if not acquired:
+                    logger.error(
+                        "Could not acquire Telegram polling lock — another instance "
+                        "still runs getUpdates. Ensure a single Render service uses "
+                        "this bot token."
+                    )
+                    _polling_started = False
+                    return
+
                 from telegram import Update, InlineKeyboardMarkup, InlineKeyboardButton
+                from telegram.error import Conflict
                 from telegram.ext import (
                     Application,
                     CallbackQueryHandler,
@@ -645,8 +783,30 @@ class TelegramApprover:
                     ContextTypes,
                 )
 
-                app = Application.builder().token(self.token).build()
+                async def _bootstrap(application):
+                    try:
+                        await application.bot.delete_webhook(drop_pending_updates=True)
+                    except Exception as wh_err:
+                        logger.warning(f"delete_webhook skipped: {wh_err}")
+
+                app = (
+                    Application.builder()
+                    .token(self.token)
+                    .post_init(_bootstrap)
+                    .build()
+                )
                 self._app = app
+
+                async def _on_error(update, context):
+                    err = context.error
+                    if isinstance(err, Conflict):
+                        logger.warning(
+                            "Telegram Conflict (another getUpdates): %s", err
+                        )
+                        return
+                    logger.error("Telegram handler error: %s", err, exc_info=err)
+
+                app.add_error_handler(_on_error)
 
                 HELP = (
                     "X Bot compose (MITL)\n\n"
@@ -937,9 +1097,23 @@ class TelegramApprover:
                     MessageHandler(filters.TEXT & ~filters.COMMAND, on_text)
                 )
                 logger.info("Telegram polish polling started (preview/album/rewrite)")
-                app.run_polling(drop_pending_updates=True, stop_signals=None)
+                try:
+                    app.run_polling(
+                        drop_pending_updates=True,
+                        stop_signals=None,
+                        allowed_updates=Update.ALL_TYPES,
+                    )
+                except Conflict as e:
+                    logger.warning(
+                        "Telegram polling stopped due to Conflict "
+                        "(another process owns getUpdates): %s",
+                        e,
+                    )
             except Exception as e:
                 logger.error(f"Telegram polling crashed: {e}", exc_info=True)
+            finally:
+                self._release_polling_lock()
+                _polling_started = False
 
         self._thread = threading.Thread(
             target=_run, name="telegram-approver", daemon=True
