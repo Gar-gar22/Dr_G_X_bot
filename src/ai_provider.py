@@ -56,22 +56,53 @@ def normalize_agentrouter_model(model: Optional[str]) -> str:
     return AGENTROUTER_DEFAULT_MODEL
 
 
+def openai_env_targets_agentrouter() -> bool:
+    """True when OPENAI_BASE_URL / OPENAI_API_BASE points at AgentRouter (docs style)."""
+    for key in ("OPENAI_BASE_URL", "OPENAI_API_BASE"):
+        url = (os.getenv(key) or "").strip().lower()
+        if "agentrouter.org" in url:
+            return True
+    return False
+
+
 def agentrouter_api_key(config: Optional[Dict[str, Any]] = None) -> Optional[str]:
-    """Resolve AgentRouter token from env or config."""
+    """Resolve AgentRouter token from env or config.
+
+    Docs-compatible: OPENAI_API_KEY + OPENAI_BASE_URL=https://agentrouter.org/v1
+    (see https://docs.agentrouter.org/en/qwencode.html).
+    """
     config = config or {}
-    return (
+    key = (
         os.getenv("AGENTROUTER_API_KEY")
         or os.getenv("AGENT_ROUTER_TOKEN")
         or (config.get("agentrouter") or {}).get("api_key")
-        or None
     )
+    if key:
+        return key
+    if openai_env_targets_agentrouter() or (
+        "agentrouter.org"
+        in str((config.get("agentrouter") or {}).get("base_url") or "").lower()
+    ):
+        return os.getenv("OPENAI_API_KEY") or (config.get("openai") or {}).get("api_key")
+    return None
 
 
 def agentrouter_base_url(config: Optional[Dict[str, Any]] = None) -> str:
     """Return AgentRouter OpenAI-compatible base URL (must end with /v1)."""
     config = config or {}
+    openai_base = (
+        os.getenv("OPENAI_BASE_URL")
+        or os.getenv("OPENAI_API_BASE")
+        or (config.get("openai") or {}).get("base_url")
+        or ""
+    ).strip()
     url = (
         os.getenv("AGENTROUTER_BASE_URL")
+        or (
+            openai_base
+            if openai_base and "agentrouter.org" in openai_base.lower()
+            else ""
+        )
         or (config.get("agentrouter") or {}).get("base_url")
         or AGENTROUTER_DEFAULT_BASE_URL
     ).strip().rstrip("/")
@@ -423,8 +454,16 @@ def resolve_provider_config(
     ar_key = agentrouter_api_key(config)
     ar_model = normalize_agentrouter_model(
         os.getenv("AGENTROUTER_MODEL")
+        or os.getenv("OPENAI_MODEL")
         or (config.get("agentrouter") or {}).get("model")
+        or (config.get("openai") or {}).get("model")
     )
+
+    # Docs style: OPENAI_API_KEY + OPENAI_BASE_URL=https://agentrouter.org/v1
+    if openai_env_targets_agentrouter() and ar_key:
+        name = (preferred or "").lower()
+        if not name or name in ("openai", "agentrouter", "agent_router"):
+            return "agentrouter", ar_key, ar_model, temperature
 
     # Auto-enable gemini if key present
     gemini_enabled = (config.get("gemini") or {}).get("enabled")

@@ -59,12 +59,14 @@ def _chat_model():
         api_key = agentrouter_api_key(cfg_dict)
         model_name = normalize_agentrouter_model(
             os.getenv("AGENTROUTER_MODEL")
+            or os.getenv("OPENAI_MODEL")
             or (cfg_dict.get("agentrouter") or {}).get("model")
             or AGENTROUTER_DEFAULT_MODEL
         )
         if not api_key:
             raise RuntimeError(
-                "AgentRouter selected but no AGENTROUTER_API_KEY / dashboard key set"
+                "AgentRouter selected but no key set. Use AGENTROUTER_API_KEY "
+                "or docs-style OPENAI_API_KEY + OPENAI_BASE_URL=https://agentrouter.org/v1"
             )
         return build_agentrouter_chat_model(
             api_key=api_key,

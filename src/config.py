@@ -231,13 +231,25 @@ class Config:
 
         self.config.setdefault("agentrouter", {"base_url": "https://agentrouter.org/v1"})
         ar_key = os.getenv("AGENTROUTER_API_KEY") or os.getenv("AGENT_ROUTER_TOKEN")
+        # Docs-style OpenAI env pointing at AgentRouter
+        openai_base = (os.getenv("OPENAI_BASE_URL") or os.getenv("OPENAI_API_BASE") or "").strip()
+        if not ar_key and openai_base and "agentrouter.org" in openai_base.lower():
+            ar_key = os.getenv("OPENAI_API_KEY")
         if ar_key:
             self.config["agentrouter"]["api_key"] = ar_key
             self.config["agentrouter"]["enabled"] = True
         if os.getenv("AGENTROUTER_BASE_URL"):
             self.config["agentrouter"]["base_url"] = os.getenv("AGENTROUTER_BASE_URL")
+        elif openai_base and "agentrouter.org" in openai_base.lower():
+            self.config["agentrouter"]["base_url"] = openai_base
         if os.getenv("AGENTROUTER_MODEL"):
             self.config["agentrouter"]["model"] = os.getenv("AGENTROUTER_MODEL")
+        elif (
+            openai_base
+            and "agentrouter.org" in openai_base.lower()
+            and os.getenv("OPENAI_MODEL")
+        ):
+            self.config["agentrouter"]["model"] = os.getenv("OPENAI_MODEL")
         # Always keep /v1 — bare https://agentrouter.org causes LangChain model_dump crashes.
         try:
             from .ai_provider import agentrouter_base_url
@@ -254,6 +266,13 @@ class Config:
         # Otherwise env permanently overrides dashboard switches (e.g. stuck on openai).
         if os.getenv("AI_PROVIDER") and not (self.config.get("ai") or {}).get("provider"):
             self.config["ai"]["provider"] = os.getenv("AI_PROVIDER")
+        elif (
+            not (self.config.get("ai") or {}).get("provider")
+            and openai_base
+            and "agentrouter.org" in openai_base.lower()
+            and ar_key
+        ):
+            self.config["ai"]["provider"] = "agentrouter"
         if os.getenv("AI_PROMPT_PROFILE"):
             self.config["ai"]["prompt_profile"] = os.getenv("AI_PROMPT_PROFILE")
 

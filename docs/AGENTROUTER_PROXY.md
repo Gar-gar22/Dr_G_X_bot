@@ -40,7 +40,21 @@ AGENTROUTER_BASE_URL=https://YOUR-SUBDOMAIN.trycloudflare.com/v1
 # (dashboard Credentials base URL stays the tunnel; token is only for the proxy)
 ```
 
-For a **stable** hostname, create a named Cloudflare Tunnel attached to your domain instead of a quick tunnel.
+For a **stable** hostname, create a **named** Cloudflare Tunnel (token), then:
+
+1. In [Zero Trust](https://one.dash.cloudflare.com/) → **Networks** → **Tunnels** → your tunnel → **Public Hostname**:
+   - Hostname: e.g. `ar-proxy.yourdomain.com`
+   - Service: HTTP → `http://host.docker.internal:8318` if cloudflared runs in **Docker on Windows**
+   - Or `http://127.0.0.1:8318` if cloudflared runs **natively** (not Docker)
+2. Keep `python scripts/agentrouter_proxy.py` on port 8318.
+3. Run the connector (do **not** commit the token):
+
+```powershell
+docker run -d --name ar-cloudflared --restart unless-stopped `
+  cloudflare/cloudflared:latest tunnel --no-autoupdate run --token $env:CLOUDFLARE_TUNNEL_TOKEN
+```
+
+4. Render: `AGENTROUTER_BASE_URL=https://ar-proxy.yourdomain.com/v1`
 
 ### ngrok alternative
 
