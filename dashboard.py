@@ -531,19 +531,24 @@ CREDENTIALS_TEMPLATE = """
 
           <form method="post" class="row g-3">
             <div class="col-12">
-              <h5>Twitter / X API</h5>
+              <h5>Twitter / X API (OAuth 1.0a)</h5>
+              <p class="small text-muted mb-0">
+                Use <strong>Keys and tokens</strong>: API Key (= Consumer Key), API Key Secret (= Consumer Secret),
+                Access Token, Access Token Secret. Optional Bearer Token for app-only reads.
+                Do <strong>not</strong> use OAuth 2.0 Client ID / Client Secret here.
+              </p>
             </div>
             <div class="col-md-6">
-              <label class="form-label">Consumer Key (API Key)</label>
+              <label class="form-label">API Key / Consumer Key</label>
               <input type="password" name="consumer_key" class="form-control" placeholder="{{ '••••••••' if x_api.get('consumer_key') else '' }}" autocomplete="off">
               <small class="text-muted">Leave blank to keep existing</small>
             </div>
             <div class="col-md-6">
-              <label class="form-label">Consumer Secret (API Secret)</label>
+              <label class="form-label">API Key Secret / Consumer Secret</label>
               <input type="password" name="consumer_secret" class="form-control" placeholder="{{ '••••••••' if x_api.get('consumer_secret') else '' }}" autocomplete="off">
             </div>
             <div class="col-md-6">
-              <label class="form-label">Access Token</label>
+              <label class="form-label">Access Token (user context)</label>
               <input type="password" name="access_token" class="form-control" placeholder="{{ '••••••••' if x_api.get('access_token') else '' }}" autocomplete="off">
             </div>
             <div class="col-md-6">
@@ -551,7 +556,7 @@ CREDENTIALS_TEMPLATE = """
               <input type="password" name="access_token_secret" class="form-control" placeholder="{{ '••••••••' if x_api.get('access_token_secret') else '' }}" autocomplete="off">
             </div>
             <div class="col-md-6">
-              <label class="form-label">Bearer Token (optional)</label>
+              <label class="form-label">Bearer Token (optional, app-only)</label>
               <input type="password" name="bearer_token" class="form-control" placeholder="{{ '••••••••' if x_api.get('bearer_token') else '' }}" autocomplete="off">
             </div>
 

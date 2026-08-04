@@ -193,10 +193,15 @@ class Config:
         """Override config values with environment variables if present."""
         self.config.setdefault("x_api", {})
 
-        if os.getenv("X_CONSUMER_KEY"):
-            self.config["x_api"]["consumer_key"] = os.getenv("X_CONSUMER_KEY")
-        if os.getenv("X_CONSUMER_SECRET"):
-            self.config["x_api"]["consumer_secret"] = os.getenv("X_CONSUMER_SECRET")
+        # OAuth 1.0a user context (required to post). Portal: API Key / API Key Secret.
+        # Prefer X_CONSUMER_*; accept X_API_KEY / X_API_SECRET as aliases.
+        # Do NOT map OAuth 2 Client ID/Secret — those are different credentials.
+        consumer_key = os.getenv("X_CONSUMER_KEY") or os.getenv("X_API_KEY")
+        consumer_secret = os.getenv("X_CONSUMER_SECRET") or os.getenv("X_API_SECRET")
+        if consumer_key:
+            self.config["x_api"]["consumer_key"] = consumer_key
+        if consumer_secret:
+            self.config["x_api"]["consumer_secret"] = consumer_secret
         if os.getenv("X_ACCESS_TOKEN"):
             self.config["x_api"]["access_token"] = os.getenv("X_ACCESS_TOKEN")
         if os.getenv("X_ACCESS_TOKEN_SECRET"):
