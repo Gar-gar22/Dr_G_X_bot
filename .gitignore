@@ -41,6 +41,9 @@ wheels/
 *.log
 logs/
 
+# Uploaded media
+media/uploads/
+
 # OS
 .DS_Store
 Thumbs.db

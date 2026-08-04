@@ -27,19 +27,36 @@ Create a `.env` in the project root (or export in the systemd unit):
 ```bash
 FLASK_SECRET_KEY=your-long-random-secret
 CRON_SECRET=another-long-random-secret
+ADMIN_EMAIL=you@example.com
+ADMIN_PASSWORD=strong-password-here
+
 DB_HOST=localhost
 DB_PORT=3306
 DB_USER=your_db_user
 DB_PASSWORD=your_db_password
 DB_NAME=twitter
-# Optional: X API and Gemini (or set in dashboard after first login)
+
+# Telegram man-in-the-loop (draft approve/edit/reject)
+TELEGRAM_BOT_TOKEN=
+TELEGRAM_CHAT_ID=
+MITL_ENABLED=true
+
+# AI (at least one)
+AI_PROVIDER=gemini
+AI_PROMPT_PROFILE=web3
+GEMINI_API_KEY=
+OPENAI_API_KEY=
+ANTHROPIC_API_KEY=
+
+# Optional: X API (or set in dashboard after first login)
 # X_CONSUMER_KEY=...
 # X_CONSUMER_SECRET=...
 # X_ACCESS_TOKEN=...
 # X_ACCESS_TOKEN_SECRET=...
 # X_BEARER_TOKEN=...
-# GEMINI_API_KEY=...
 ```
+
+**Note:** Keep Gunicorn at `-w 1`. The dashboard process also runs the Telegram long-poller and in-thread bot runs; multiple workers would duplicate polling.
 
 ---
 
@@ -147,15 +164,18 @@ Or with the public URL:
 
 ## 7. First-time setup
 
-- Open `https://your-domain.com` (or `http://` if not using SSL), log in with your allowed email.
-- In the dashboard, set **Credentials** (X API, optional Gemini) and **Keywords** if not set via env.
+- Open `https://your-domain.com` (or `http://` if not using SSL), log in with `ADMIN_EMAIL` / `ADMIN_PASSWORD`.
+- In the dashboard, set **Credentials** (X API + AI keys) and **Keywords** if not set via env.
+- Under **AI Settings**, pick niche (`web3`, `blockchain`, etc.) and edit system instructions.
+- Confirm Telegram receives draft notifications; approve from Telegram or **Drafts**.
 
-The bot will run once per day at the time defined in crontab.
+The bot will run once per day at the time defined in crontab (or use Automation start for the in-app scheduler).
 
 ---
 
 ## Security
 
+- **ADMIN_EMAIL / ADMIN_PASSWORD:** Required for dashboard access.
 - **CRON_SECRET:** Keep it long and random; anyone with this URL can trigger a run. Don’t commit it to the repo.
 - **FLASK_SECRET_KEY:** Required for sessions; use a different long random string.
-- **Dashboard login:** Only the allowed email can log in; credentials are stored in the DB and (if present) `config.json`.
+- **Telegram:** Only messages from `TELEGRAM_CHAT_ID` are accepted for approve/edit/reject.

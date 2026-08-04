@@ -259,55 +259,87 @@ class XAPI:
             logger.error(f"Error searching tweets for '{query}': {e}")
             return []
     
-    def post_reply(self, text: str, in_reply_to_tweet_id: str) -> Optional[str]:
-        """Post a reply to a tweet (text-only, using API v1.1)."""
+    def upload_media(self, file_path: str) -> Optional[str]:
+        """Upload an image file via API v1.1; returns media_id string."""
         try:
-            # Use API v1.1 for posting text-only replies
-            status = self.api.update_status(
-                status=text,
-                in_reply_to_status_id=in_reply_to_tweet_id,
-                auto_populate_reply_metadata=True
-            )
-            
+            media = self.api.media_upload(filename=file_path)
+            media_id = str(media.media_id)
+            logger.info(f"Uploaded media {media_id} from {file_path}")
+            return media_id
+        except Exception as e:
+            logger.error(f"Error uploading media: {e}", exc_info=True)
+            return None
+
+    def upload_media_files(self, file_paths: list) -> list:
+        """Upload multiple files; returns list of media_id strings (skips failures)."""
+        ids = []
+        for path in (file_paths or [])[:4]:
+            mid = self.upload_media(path)
+            if mid:
+                ids.append(mid)
+        return ids
+
+    def post_reply(
+        self,
+        text: str,
+        in_reply_to_tweet_id: str,
+        media_ids: Optional[list] = None,
+    ) -> Optional[str]:
+        """Post a reply to a tweet (optionally with images)."""
+        try:
+            kwargs = {
+                "status": text,
+                "in_reply_to_status_id": in_reply_to_tweet_id,
+                "auto_populate_reply_metadata": True,
+            }
+            if media_ids:
+                kwargs["media_ids"] = [str(m) for m in media_ids[:4]]
+            status = self.api.update_status(**kwargs)
             reply_id = str(status.id)
             logger.info(f"Posted reply {reply_id} to tweet {in_reply_to_tweet_id}")
             return reply_id
-        
+
         except tweepy.TooManyRequests:
             logger.warning("Rate limit exceeded. Waiting...")
-            time.sleep(900)  # Wait 15 minutes
+            time.sleep(900)
             return None
         except Exception as e:
             logger.error(f"Error posting reply: {e}")
             return None
-    
-    def post_tweet(self, text: str) -> Optional[str]:
-        """Post an original tweet (text-only, using API v2)."""
+
+    def post_tweet(self, text: str, media_ids: Optional[list] = None) -> Optional[str]:
+        """Post an original tweet (optionally with images)."""
         try:
-            # Try API v2 first (preferred)
+            media_ids = [str(m) for m in (media_ids or [])[:4]] or None
+
             if self.client:
                 try:
-                    response = self.client.create_tweet(text=text)
+                    kwargs = {"text": text}
+                    if media_ids:
+                        kwargs["media_ids"] = media_ids
+                    response = self.client.create_tweet(**kwargs)
                     if response and response.data:
-                        tweet_id = str(response.data['id'])
+                        tweet_id = str(response.data["id"])
                         logger.info(f"Posted tweet {tweet_id} via API v2: {text[:50]}...")
                         return tweet_id
                 except Exception as v2_error:
                     logger.warning(f"API v2 failed, trying v1.1: {v2_error}")
-            
-            # Fallback to API v1.1
+
             if self.api:
-                status = self.api.update_status(status=text)
+                kwargs = {"status": text}
+                if media_ids:
+                    kwargs["media_ids"] = media_ids
+                status = self.api.update_status(**kwargs)
                 tweet_id = str(status.id)
                 logger.info(f"Posted tweet {tweet_id} via API v1.1: {text[:50]}...")
                 return tweet_id
-            
+
             logger.error("No API client available for posting tweet")
             return None
-        
+
         except tweepy.TooManyRequests:
             logger.warning("Rate limit exceeded. Waiting...")
-            time.sleep(900)  # Wait 15 minutes
+            time.sleep(900)
             return None
         except Exception as e:
             logger.error(f"Error posting tweet: {e}")
@@ -433,42 +465,49 @@ class XAPI:
             logger.error(f"Error retweeting tweet {tweet_id}: {e}")
             return None
     
-    def quote_tweet(self, text: str, tweet_id: str) -> Optional[str]:
-        """Post a quote tweet (text-only, using API v2 preferred, fallback to v1.1)."""
+    def quote_tweet(
+        self, text: str, tweet_id: str, media_ids: Optional[list] = None
+    ) -> Optional[str]:
+        """Post a quote tweet (optionally with images)."""
         try:
-            # Try API v2 first (preferred method)
+            media_ids = [str(m) for m in (media_ids or [])[:4]] or None
+
             if self.client:
                 try:
-                    response = self.client.create_tweet(
-                        text=text,
-                        quote_tweet_id=tweet_id
-                    )
+                    kwargs = {"text": text, "quote_tweet_id": tweet_id}
+                    if media_ids:
+                        kwargs["media_ids"] = media_ids
+                    response = self.client.create_tweet(**kwargs)
                     if response and response.data:
-                        quote_id = str(response.data['id'])
-                        logger.info(f"Posted quote tweet {quote_id} via API v2 quoting tweet {tweet_id}")
+                        quote_id = str(response.data["id"])
+                        logger.info(
+                            f"Posted quote tweet {quote_id} via API v2 quoting tweet {tweet_id}"
+                        )
                         return quote_id
                 except Exception as v2_error:
                     logger.warning(f"API v2 quote tweet failed, trying v1.1: {v2_error}")
-            
-            # Fallback to API v1.1 (embed the tweet URL in the text)
+
             if self.api:
                 tweet_url = f"https://twitter.com/i/web/status/{tweet_id}"
-                # Ensure text + URL doesn't exceed 280 chars
-                max_text_len = 280 - len(tweet_url) - 1  # -1 for space
+                max_text_len = 280 - len(tweet_url) - 1
                 if len(text) > max_text_len:
-                    text = text[:max_text_len-3] + "..."
+                    text = text[: max_text_len - 3] + "..."
                 quote_text = f"{text} {tweet_url}"
-                
-                status = self.api.update_status(status=quote_text)
+                kwargs = {"status": quote_text}
+                if media_ids:
+                    kwargs["media_ids"] = media_ids
+                status = self.api.update_status(**kwargs)
                 quote_id = str(status.id)
-                logger.info(f"Posted quote tweet {quote_id} via API v1.1 quoting tweet {tweet_id}")
+                logger.info(
+                    f"Posted quote tweet {quote_id} via API v1.1 quoting tweet {tweet_id}"
+                )
                 return quote_id
-            
+
             logger.error("No API client available for posting quote tweet")
             return None
         except tweepy.TooManyRequests:
             logger.warning("Rate limit exceeded. Waiting...")
-            time.sleep(900)  # Wait 15 minutes
+            time.sleep(900)
             return None
         except Exception as e:
             logger.error(f"Error posting quote tweet: {e}")

@@ -1,5 +1,4 @@
-from flask import Flask, render_template_string, request, redirect, url_for, flash, session, jsonify
-import sqlite3
+from flask import Flask, render_template_string, request, redirect, url_for, flash, session, jsonify, send_from_directory
 import json
 import re
 import logging
@@ -12,11 +11,16 @@ from typing import List, Optional, Tuple
 from functools import wraps
 from datetime import datetime
 
+from werkzeug.security import check_password_hash, generate_password_hash
+import schedule
+
 from src.config import Config
 from src.x_api import XAPI
 from src.bot import AutoReplyBot
 from src.scheduler import BotScheduler
 from src.database import Database
+from src.telegram_approver import DraftPoster, get_telegram_approver
+from src.media_store import media_root, save_upload, delete_file
 
 logger = logging.getLogger(__name__)
 
@@ -38,11 +42,11 @@ app = Flask(__name__)
 # Use environment variable for secret key in production, fallback for development
 app.secret_key = os.getenv("FLASK_SECRET_KEY", "change-this-secret-key-in-production")
 
-DB_PATH = Path("bot_state.db")
-AUTH_DB_PATH = Path("auth.db")
-
-# Allowed email for registration
-ALLOWED_EMAIL = "ohakwebusiness@gmail.com"
+ADMIN_EMAIL = (os.getenv("ADMIN_EMAIL") or "").strip().lower()
+ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD") or ""
+_ADMIN_PASSWORD_HASH = (
+    generate_password_hash(ADMIN_PASSWORD) if ADMIN_PASSWORD else None
+)
 
 
 def _extract_profile_keywords(texts: List[str], max_keywords: int = 50) -> List[str]:
@@ -148,36 +152,6 @@ def get_db_connection():
     return db_instance
 
 
-def get_auth_db_connection():
-    """Get connection to authentication database (still using SQLite for auth)."""
-    conn = sqlite3.connect(AUTH_DB_PATH)
-    conn.row_factory = sqlite3.Row
-    return conn
-
-
-def init_auth_db():
-    """Initialize authentication database with users table (SQLite)."""
-    conn = get_auth_db_connection()
-    cur = conn.cursor()
-    try:
-        cur.execute("""
-            CREATE TABLE IF NOT EXISTS users (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                email TEXT UNIQUE NOT NULL,
-                password_hash TEXT NOT NULL,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            )
-        """)
-        cur.execute("CREATE INDEX IF NOT EXISTS idx_email ON users(email)")
-        conn.commit()
-    except Exception as e:
-        logger.error(f"Error initializing auth database: {e}")
-        conn.rollback()
-    finally:
-        cur.close()
-        conn.close()
-
-
 def login_required(f):
     """Decorator to require login for routes."""
     @wraps(f)
@@ -187,6 +161,16 @@ def login_required(f):
             return redirect(url_for('login'))
         return f(*args, **kwargs)
     return decorated_function
+
+
+def verify_admin(email: str, password: str) -> bool:
+    """Verify admin credentials from environment."""
+    if not ADMIN_EMAIL or not _ADMIN_PASSWORD_HASH:
+        logger.error("ADMIN_EMAIL / ADMIN_PASSWORD not configured")
+        return False
+    if email.strip().lower() != ADMIN_EMAIL:
+        return False
+    return check_password_hash(_ADMIN_PASSWORD_HASH, password)
 
 
 HOME_TEMPLATE = """
@@ -234,6 +218,31 @@ HOME_TEMPLATE = """
           <li>
             <a href="{{ url_for('settings_logs') }}" class="nav-link text-white">
               <i class="bi bi-journal-text me-2"></i> Logs
+            </a>
+          </li>
+          <li>
+            <a href="{{ url_for('records_drafts') }}" class="nav-link text-white">
+              <i class="bi bi-hourglass-split me-2"></i> Drafts
+            </a>
+          </li>
+          <li>
+            <a href="{{ url_for('records_replies') }}" class="nav-link text-white">
+              <i class="bi bi-chat-left-text me-2"></i> Records
+            </a>
+          </li>
+          <li>
+            <a href="{{ url_for('settings_ai') }}" class="nav-link text-white">
+              <i class="bi bi-robot me-2"></i> AI Settings
+            </a>
+          </li>
+          <li>
+            <a href="{{ url_for('settings_media') }}" class="nav-link text-white">
+              <i class="bi bi-image me-2"></i> Media
+            </a>
+          </li>
+          <li>
+            <a href="{{ url_for('settings_safety') }}" class="nav-link text-white">
+              <i class="bi bi-shield-check me-2"></i> Safety
             </a>
           </li>
         </ul>
@@ -308,6 +317,24 @@ HOME_TEMPLATE = """
               <div class="card-body">
                 <h6 class="card-title text-muted">Total Quote Retweets</h6>
                 <p class="display-6 mb-0">{{ total_quote_retweets }}</p>
+              </div>
+            </div>
+          </div>
+          <div class="col-md-3">
+            <div class="card shadow-sm">
+              <div class="card-body">
+                <h6 class="card-title text-muted">Pending Drafts</h6>
+                <p class="display-6 mb-0">{{ pending_drafts }}</p>
+                <a href="{{ url_for('records_drafts') }}" class="small">Review drafts</a>
+              </div>
+            </div>
+          </div>
+          <div class="col-md-3">
+            <div class="card shadow-sm">
+              <div class="card-body">
+                <h6 class="card-title text-muted">Blocked today</h6>
+                <p class="display-6 mb-0">{{ blocked_today }}</p>
+                <a href="{{ url_for('settings_safety') }}" class="small">Safety settings</a>
               </div>
             </div>
           </div>
@@ -422,6 +449,31 @@ CREDENTIALS_TEMPLATE = """
               <i class="bi bi-journal-text me-2"></i> Logs
             </a>
           </li>
+          <li>
+            <a href="{{ url_for('records_drafts') }}" class="nav-link text-white">
+              <i class="bi bi-hourglass-split me-2"></i> Drafts
+            </a>
+          </li>
+          <li>
+            <a href="{{ url_for('records_replies') }}" class="nav-link text-white">
+              <i class="bi bi-chat-left-text me-2"></i> Records
+            </a>
+          </li>
+          <li>
+            <a href="{{ url_for('settings_ai') }}" class="nav-link text-white">
+              <i class="bi bi-robot me-2"></i> AI Settings
+            </a>
+          </li>
+          <li>
+            <a href="{{ url_for('settings_media') }}" class="nav-link text-white">
+              <i class="bi bi-image me-2"></i> Media
+            </a>
+          </li>
+          <li>
+            <a href="{{ url_for('settings_safety') }}" class="nav-link text-white">
+              <i class="bi bi-shield-check me-2"></i> Safety
+            </a>
+          </li>
         </ul>
         <div class="mt-auto pt-3 border-top">
           <div class="small text-muted mb-2">{{ session.get('user_email', 'User') }}</div>
@@ -470,40 +522,67 @@ CREDENTIALS_TEMPLATE = """
             </div>
             <div class="col-md-6">
               <label class="form-label">Consumer Key (API Key)</label>
-              <input type="password" name="consumer_key" class="form-control" value="{% if x_api and 'consumer_key' in x_api %}{{ x_api['consumer_key'] }}{% endif %}">
+              <input type="password" name="consumer_key" class="form-control" placeholder="{{ '••••••••' if x_api.get('consumer_key') else '' }}" autocomplete="off">
+              <small class="text-muted">Leave blank to keep existing</small>
             </div>
             <div class="col-md-6">
               <label class="form-label">Consumer Secret (API Secret)</label>
-              <input type="password" name="consumer_secret" class="form-control" value="{% if x_api and 'consumer_secret' in x_api %}{{ x_api['consumer_secret'] }}{% endif %}">
+              <input type="password" name="consumer_secret" class="form-control" placeholder="{{ '••••••••' if x_api.get('consumer_secret') else '' }}" autocomplete="off">
             </div>
             <div class="col-md-6">
               <label class="form-label">Access Token</label>
-              <input type="password" name="access_token" class="form-control" value="{% if x_api and 'access_token' in x_api %}{{ x_api['access_token'] }}{% endif %}">
+              <input type="password" name="access_token" class="form-control" placeholder="{{ '••••••••' if x_api.get('access_token') else '' }}" autocomplete="off">
             </div>
             <div class="col-md-6">
               <label class="form-label">Access Token Secret</label>
-              <input type="password" name="access_token_secret" class="form-control" value="{% if x_api and 'access_token_secret' in x_api %}{{ x_api['access_token_secret'] }}{% endif %}">
+              <input type="password" name="access_token_secret" class="form-control" placeholder="{{ '••••••••' if x_api.get('access_token_secret') else '' }}" autocomplete="off">
             </div>
             <div class="col-md-6">
               <label class="form-label">Bearer Token (optional)</label>
-              <input type="password" name="bearer_token" class="form-control" value="{% if x_api and 'bearer_token' in x_api %}{{ x_api['bearer_token'] }}{% endif %}">
+              <input type="password" name="bearer_token" class="form-control" placeholder="{{ '••••••••' if x_api.get('bearer_token') else '' }}" autocomplete="off">
             </div>
 
             <div class="col-12 mt-4">
-              <h5>Google Gemini (Optional)</h5>
-              <p class="text-muted small mb-2">Get your API key from <a href="https://makersuite.google.com/app/apikey" target="_blank" class="text-info">Google AI Studio</a></p>
+              <h5>AI Providers</h5>
+              <p class="text-muted small mb-2">Leave API key blank to keep the existing key. Manage niches/system prompts under AI Settings.</p>
             </div>
-            <div class="col-md-8">
+            <div class="col-md-6">
               <label class="form-label">Gemini API Key</label>
-              <input type="password" name="gemini_api_key" class="form-control" value="{% if gemini and 'api_key' in gemini %}{{ gemini['api_key'] }}{% endif %}">
+              <input type="password" name="gemini_api_key" class="form-control" placeholder="{{ '••••••••' if gemini.get('api_key') else '' }}" autocomplete="off">
             </div>
-            <div class="col-md-4 d-flex align-items-end">
+            <div class="col-md-3 d-flex align-items-end">
               <div class="form-check">
                 <input class="form-check-input" type="checkbox" name="gemini_enabled" id="gemini_enabled" {% if gemini.get('enabled') %}checked{% endif %}>
-                <label class="form-check-label" for="gemini_enabled">
-                  Enable AI replies
-                </label>
+                <label class="form-check-label" for="gemini_enabled">Enable Gemini</label>
               </div>
+            </div>
+            <div class="col-md-6">
+              <label class="form-label">OpenAI API Key</label>
+              <input type="password" name="openai_api_key" class="form-control" placeholder="{{ '••••••••' if openai.get('api_key') else '' }}" autocomplete="off">
+            </div>
+            <div class="col-md-3 d-flex align-items-end">
+              <div class="form-check">
+                <input class="form-check-input" type="checkbox" name="openai_enabled" id="openai_enabled" {% if openai.get('enabled') %}checked{% endif %}>
+                <label class="form-check-label" for="openai_enabled">Enable OpenAI</label>
+              </div>
+            </div>
+            <div class="col-md-6">
+              <label class="form-label">Anthropic API Key</label>
+              <input type="password" name="anthropic_api_key" class="form-control" placeholder="{{ '••••••••' if anthropic.get('api_key') else '' }}" autocomplete="off">
+            </div>
+            <div class="col-md-3 d-flex align-items-end">
+              <div class="form-check">
+                <input class="form-check-input" type="checkbox" name="anthropic_enabled" id="anthropic_enabled" {% if anthropic.get('enabled') %}checked{% endif %}>
+                <label class="form-check-label" for="anthropic_enabled">Enable Anthropic</label>
+              </div>
+            </div>
+            <div class="col-md-4">
+              <label class="form-label">Default AI Provider</label>
+              <select name="ai_provider" class="form-select">
+                <option value="gemini" {% if ai.get('provider') == 'gemini' %}selected{% endif %}>Gemini</option>
+                <option value="openai" {% if ai.get('provider') == 'openai' %}selected{% endif %}>OpenAI</option>
+                <option value="anthropic" {% if ai.get('provider') == 'anthropic' %}selected{% endif %}>Anthropic</option>
+              </select>
             </div>
 
             <div class="col-12 mt-4">
@@ -774,8 +853,11 @@ LOGIN_TEMPLATE = """
       <form method="post">
         <div class="mb-3">
           <label class="form-label text-light">Email Address</label>
-          <input type="email" name="email" class="form-control" required autofocus placeholder="Enter your email">
-          <small class="text-muted">Only authorized email addresses can access the dashboard.</small>
+          <input type="email" name="email" class="form-control" required autofocus placeholder="Admin email">
+        </div>
+        <div class="mb-3">
+          <label class="form-label text-light">Password</label>
+          <input type="password" name="password" class="form-control" required placeholder="Admin password">
         </div>
         <button type="submit" class="btn btn-primary w-100 mb-3">
           <i class="bi bi-box-arrow-in-right me-2"></i>Login
@@ -838,6 +920,31 @@ AUTOMATION_TEMPLATE = """
           <li>
             <a href="{{ url_for('settings_logs') }}" class="nav-link text-white">
               <i class="bi bi-journal-text me-2"></i> Logs
+            </a>
+          </li>
+          <li>
+            <a href="{{ url_for('records_drafts') }}" class="nav-link text-white">
+              <i class="bi bi-hourglass-split me-2"></i> Drafts
+            </a>
+          </li>
+          <li>
+            <a href="{{ url_for('records_replies') }}" class="nav-link text-white">
+              <i class="bi bi-chat-left-text me-2"></i> Records
+            </a>
+          </li>
+          <li>
+            <a href="{{ url_for('settings_ai') }}" class="nav-link text-white">
+              <i class="bi bi-robot me-2"></i> AI Settings
+            </a>
+          </li>
+          <li>
+            <a href="{{ url_for('settings_media') }}" class="nav-link text-white">
+              <i class="bi bi-image me-2"></i> Media
+            </a>
+          </li>
+          <li>
+            <a href="{{ url_for('settings_safety') }}" class="nav-link text-white">
+              <i class="bi bi-shield-check me-2"></i> Safety
             </a>
           </li>
         </ul>
@@ -1048,6 +1155,16 @@ AUTOMATION_TEMPLATE = """
             </div>
 
             <div class="col-12 mt-4">
+              <h5>Man-in-the-loop</h5>
+              <div class="form-check">
+                <input class="form-check-input" type="checkbox" name="mitl_enabled" id="mitl_enabled" {% if mitl_enabled %}checked{% endif %}>
+                <label class="form-check-label" for="mitl_enabled">
+                  Require Telegram/dashboard approval before posting (recommended)
+                </label>
+              </div>
+            </div>
+
+            <div class="col-12 mt-4">
               <button type="submit" class="btn btn-primary">
                 <i class="bi bi-save me-1"></i>Save Settings
               </button>
@@ -1145,6 +1262,31 @@ KEYWORDS_TEMPLATE = """
           <li>
             <a href="{{ url_for('settings_logs') }}" class="nav-link text-white">
               <i class="bi bi-journal-text me-2"></i> Logs
+            </a>
+          </li>
+          <li>
+            <a href="{{ url_for('records_drafts') }}" class="nav-link text-white">
+              <i class="bi bi-hourglass-split me-2"></i> Drafts
+            </a>
+          </li>
+          <li>
+            <a href="{{ url_for('records_replies') }}" class="nav-link text-white">
+              <i class="bi bi-chat-left-text me-2"></i> Records
+            </a>
+          </li>
+          <li>
+            <a href="{{ url_for('settings_ai') }}" class="nav-link text-white">
+              <i class="bi bi-robot me-2"></i> AI Settings
+            </a>
+          </li>
+          <li>
+            <a href="{{ url_for('settings_media') }}" class="nav-link text-white">
+              <i class="bi bi-image me-2"></i> Media
+            </a>
+          </li>
+          <li>
+            <a href="{{ url_for('settings_safety') }}" class="nav-link text-white">
+              <i class="bi bi-shield-check me-2"></i> Safety
             </a>
           </li>
         </ul>
@@ -1348,6 +1490,31 @@ LOGS_TEMPLATE = """
               <i class="bi bi-journal-text me-2"></i> Logs
             </a>
           </li>
+          <li>
+            <a href="{{ url_for('records_drafts') }}" class="nav-link text-white">
+              <i class="bi bi-hourglass-split me-2"></i> Drafts
+            </a>
+          </li>
+          <li>
+            <a href="{{ url_for('records_replies') }}" class="nav-link text-white">
+              <i class="bi bi-chat-left-text me-2"></i> Records
+            </a>
+          </li>
+          <li>
+            <a href="{{ url_for('settings_ai') }}" class="nav-link text-white">
+              <i class="bi bi-robot me-2"></i> AI Settings
+            </a>
+          </li>
+          <li>
+            <a href="{{ url_for('settings_media') }}" class="nav-link text-white">
+              <i class="bi bi-image me-2"></i> Media
+            </a>
+          </li>
+          <li>
+            <a href="{{ url_for('settings_safety') }}" class="nav-link text-white">
+              <i class="bi bi-shield-check me-2"></i> Safety
+            </a>
+          </li>
         </ul>
         <div class="mt-auto pt-3 border-top">
           <div class="small text-muted mb-2">{{ session.get('user_email', 'User') }}</div>
@@ -1392,8 +1559,11 @@ LOGS_TEMPLATE = """
 """
 
 
-# Initialize auth database on startup
-init_auth_db()
+# Start Telegram MITL poller (no-op if token/chat not set)
+try:
+    get_telegram_approver().start_polling()
+except Exception as _tg_err:
+    logger.warning(f"Telegram approver not started: {_tg_err}")
 
 
 @app.route("/")
@@ -1404,25 +1574,31 @@ def landing():
 
 @app.route("/login", methods=["GET", "POST"])
 def login():
-    """Login page - email only, no password required."""
+    """Admin login with email + password from env."""
     if request.method == "POST":
         email = request.form.get("email", "").strip().lower()
-        
-        if not email:
-            flash("Please enter your email address.", "danger")
+        password = request.form.get("password", "")
+
+        if not email or not password:
+            flash("Email and password are required.", "danger")
             return render_template_string(LOGIN_TEMPLATE)
-        
-        # Only allow the authorized email
-        if email != ALLOWED_EMAIL:
-            flash("Access denied. Only authorized email addresses can login.", "danger")
+
+        if not ADMIN_EMAIL or not ADMIN_PASSWORD:
+            flash(
+                "Admin login is not configured. Set ADMIN_EMAIL and ADMIN_PASSWORD.",
+                "danger",
+            )
             return render_template_string(LOGIN_TEMPLATE)
-        
-        # Login successful - no password check needed
-        session['user_id'] = 1  # Simple session ID
-        session['user_email'] = email
+
+        if not verify_admin(email, password):
+            flash("Invalid email or password.", "danger")
+            return render_template_string(LOGIN_TEMPLATE)
+
+        session["user_id"] = 1
+        session["user_email"] = email
         flash("Login successful!", "success")
-        return redirect(url_for('dashboard_overview'))
-    
+        return redirect(url_for("dashboard_overview"))
+
     return render_template_string(LOGIN_TEMPLATE)
 
 
@@ -1492,6 +1668,10 @@ def settings_logs():
 def dashboard_overview():
     """Overview page: basic stats from database and setup status."""
     total_replied = 0
+    total_tweets_posted = 0
+    total_quote_retweets = 0
+    pending_drafts = 0
+    blocked_today = 0
     last_reply = None
     recent_replies = []
     has_twitter = False
@@ -1536,6 +1716,8 @@ def dashboard_overview():
                 total_replied=0,
                 total_tweets_posted=0,
                 total_quote_retweets=0,
+                pending_drafts=0,
+                blocked_today=0,
                 last_reply=None,
                 recent_replies=[],
                 has_twitter=has_twitter,
@@ -1556,6 +1738,8 @@ def dashboard_overview():
                 total_replied=0,
                 total_tweets_posted=0,
                 total_quote_retweets=0,
+                pending_drafts=0,
+                blocked_today=0,
                 last_reply=None,
                 recent_replies=[],
                 has_twitter=has_twitter,
@@ -1592,6 +1776,24 @@ def dashboard_overview():
         except Exception as e:
             logger.error(f"Error getting total quote retweets: {e}")
             total_quote_retweets = 0
+
+        try:
+            cur.execute(
+                "SELECT COUNT(*) as count FROM content_drafts WHERE status = 'pending'"
+            )
+            result = cur.fetchone()
+            pending_drafts = result["count"] if result else 0
+        except Exception as e:
+            logger.error(f"Error getting pending drafts: {e}")
+            pending_drafts = 0
+
+        try:
+            from src.quality_safety import count_safety_events_today
+
+            blocked_today = count_safety_events_today(conn)
+        except Exception as e:
+            logger.error(f"Error getting safety events: {e}")
+            blocked_today = 0
 
         # Get last reply timestamp
         try:
@@ -1662,6 +1864,8 @@ def dashboard_overview():
             total_replied = 0
             total_tweets_posted = 0
             total_quote_retweets = 0
+            pending_drafts = 0
+            blocked_today = 0
             last_reply = None
             recent_replies = []
     except Exception as e:
@@ -1675,12 +1879,16 @@ def dashboard_overview():
         total_quote_retweets = 0
         last_reply = None
         recent_replies = []
+        pending_drafts = 0
+        blocked_today = 0
 
     return render_template_string(
         HOME_TEMPLATE,
         total_replied=total_replied,
         total_tweets_posted=total_tweets_posted,
         total_quote_retweets=total_quote_retweets,
+        pending_drafts=pending_drafts,
+        blocked_today=blocked_today,
         last_reply=last_reply,
         recent_replies=recent_replies,
         has_twitter=has_twitter,
@@ -1731,35 +1939,42 @@ def settings_credentials():
 
         data = config.config
         data.setdefault("x_api", {})
-        data["x_api"]["consumer_key"] = request.form.get(
-            "consumer_key", ""
-        ).strip()
-        data["x_api"]["consumer_secret"] = request.form.get(
-            "consumer_secret", ""
-        ).strip()
-        data["x_api"]["access_token"] = request.form.get(
-            "access_token", ""
-        ).strip()
-        data["x_api"]["access_token_secret"] = request.form.get(
-            "access_token_secret", ""
-        ).strip()
-        data["x_api"]["bearer_token"] = request.form.get(
-            "bearer_token", ""
-        ).strip()
+        for field in (
+            "consumer_key",
+            "consumer_secret",
+            "access_token",
+            "access_token_secret",
+            "bearer_token",
+        ):
+            val = request.form.get(field, "").strip()
+            if val:
+                data["x_api"][field] = val
 
-        data.setdefault("gemini", {})
-        data["gemini"]["api_key"] = request.form.get(
-            "gemini_api_key", ""
-        ).strip()
-        data["gemini"]["enabled"] = bool(request.form.get("gemini_enabled"))
-        data["gemini"]["model"] = request.form.get("gemini_model", "gemini-pro").strip()
-        data["gemini"]["temperature"] = float(request.form.get("gemini_temperature", 0.7))
+        data.setdefault("ai", {})
+        data["ai"]["provider"] = request.form.get("ai_provider", "gemini").strip() or "gemini"
+
+        for provider, form_key in (
+            ("gemini", "gemini_api_key"),
+            ("openai", "openai_api_key"),
+            ("anthropic", "anthropic_api_key"),
+        ):
+            data.setdefault(provider, {})
+            key_val = request.form.get(form_key, "").strip()
+            if key_val:
+                data[provider]["api_key"] = key_val
+            data[provider]["enabled"] = bool(request.form.get(f"{provider}_enabled"))
 
         Path(config.config_path).write_text(
             json.dumps(data, indent=2), encoding="utf-8"
         )
+        try:
+            config.save_to_database(force=True)
+        except Exception as e:
+            logger.warning(f"Could not sync credentials to DB: {e}")
 
         try:
+            # Reload for fresh credentials after file write
+            config = Config()
             xapi = XAPI(config.get_x_api_credentials())
             user = xapi.get_user_info()
             if user:
@@ -1781,6 +1996,9 @@ def settings_credentials():
 
     x_api = config.config.get("x_api", {}) if config else {}
     gemini = config.config.get("gemini", {}) if config else {}
+    openai_cfg = config.config.get("openai", {}) if config else {}
+    anthropic = config.config.get("anthropic", {}) if config else {}
+    ai = config.config.get("ai", {}) if config else {}
     
     # Check if Twitter is connected
     is_connected = False
@@ -1791,7 +2009,7 @@ def settings_credentials():
             connected_user = xapi.get_user_info()
             if connected_user:
                 is_connected = True
-        except:
+        except Exception:
             is_connected = False
 
     return render_template_string(
@@ -1799,6 +2017,9 @@ def settings_credentials():
         config_error=error,
         x_api=x_api,
         gemini=gemini,
+        openai=openai_cfg,
+        anthropic=anthropic,
+        ai=ai,
         is_connected=is_connected,
         connected_user=connected_user,
     )
@@ -2158,6 +2379,9 @@ def settings_automation():
             data["tweet_settings"]["thread_enabled"] = True
             data["tweet_settings"]["threads_per_run"] = int(request.form.get("threads_per_run", 0))
             data["tweet_settings"]["thread_tweet_count"] = int(request.form.get("thread_tweet_count", 3))
+
+            data.setdefault("man_in_the_loop", {})
+            data["man_in_the_loop"]["enabled"] = bool(request.form.get("mitl_enabled"))
             
             Path(config.config_path).write_text(
                 json.dumps(data, indent=2), encoding="utf-8"
@@ -2176,11 +2400,13 @@ def settings_automation():
     schedule = {}
     reply_settings = {}
     tweet_settings = {}
+    mitl_enabled = True
     
     if config:
         schedule = config.get_schedule_config()
         reply_settings = config.get_reply_settings()
         tweet_settings = config.get_tweet_settings()
+        mitl_enabled = config.get_mitl_enabled()
     
     with bot_status_lock:
         bot_running = bot_status["running"]
@@ -2195,10 +2421,652 @@ def settings_automation():
         schedule=schedule,
         reply_settings=reply_settings,
         tweet_settings=tweet_settings,
+        mitl_enabled=mitl_enabled,
         bot_running=bot_running,
         last_run=last_run,
         next_run=next_run,
         preview=preview,
+    )
+
+
+RECORDS_SHELL = """
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>{{ page_title }} - X Bot</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.css" rel="stylesheet">
+    <link href="{{ url_for('static', filename='style.css') }}" rel="stylesheet">
+  </head>
+  <body>
+    <div class="d-flex">
+      <nav class="sidebar bg-dark text-white p-3">
+        <h5 class="mb-4">X Bot</h5>
+        <ul class="nav nav-pills flex-column mb-auto">
+          <li><a href="{{ url_for('dashboard_overview') }}" class="nav-link text-white">Overview</a></li>
+          <li><a href="{{ url_for('settings_keywords') }}" class="nav-link text-white">Keywords & Filters</a></li>
+          <li><a href="{{ url_for('settings_credentials') }}" class="nav-link text-white">Credentials</a></li>
+          <li><a href="{{ url_for('settings_automation') }}" class="nav-link text-white">Automation</a></li>
+          <li><a href="{{ url_for('settings_logs') }}" class="nav-link text-white">Logs</a></li>
+          <li><a href="{{ url_for('records_drafts') }}" class="nav-link text-white {% if active=='drafts' %}active{% endif %}">Drafts</a></li>
+          <li><a href="{{ url_for('records_replies') }}" class="nav-link text-white {% if active=='replies' %}active{% endif %}">Records</a></li>
+          <li><a href="{{ url_for('settings_ai') }}" class="nav-link text-white {% if active=='ai' %}active{% endif %}">AI Settings</a></li>
+          <li><a href="{{ url_for('settings_media') }}" class="nav-link text-white {% if active=='media' %}active{% endif %}">Media</a></li>
+          <li><a href="{{ url_for('settings_safety') }}" class="nav-link text-white {% if active=='safety' %}active{% endif %}">Safety</a></li>
+        </ul>
+        <div class="mt-auto pt-3 border-top">
+          <a href="{{ url_for('logout') }}" class="btn btn-outline-light btn-sm w-100">Logout</a>
+        </div>
+      </nav>
+      <main class="flex-grow-1 p-4">
+        {% with messages = get_flashed_messages(with_categories=true) %}
+          {% if messages %}
+            {% for category, message in messages %}
+              <div class="alert alert-{{ category }}">{{ message }}</div>
+            {% endfor %}
+          {% endif %}
+        {% endwith %}
+        {{ body|safe }}
+      </main>
+    </div>
+  </body>
+</html>
+"""
+
+
+@app.route("/records/drafts", methods=["GET", "POST"])
+@login_required
+def records_drafts():
+    """Pending / recent drafts with approve/reject/edit and image attach."""
+    poster = DraftPoster()
+    db = get_db_connection()
+
+    if request.method == "POST":
+        action = request.form.get("action")
+        try:
+            draft_id = int(request.form.get("draft_id", "0"))
+        except ValueError:
+            flash("Invalid draft id", "danger")
+            return redirect(url_for("records_drafts"))
+
+        if action == "approve":
+            # Persist selected images before posting
+            raw_ids = request.form.getlist("media_ids")
+            try:
+                media_ids = [int(x) for x in raw_ids][:4]
+            except ValueError:
+                media_ids = []
+            db.set_draft_media(draft_id, media_ids)
+            edited = request.form.get("edited_text")
+            result = poster.approve_and_post(draft_id, edited_text=edited)
+            flash(
+                "Posted." if result.get("ok") else f"Failed: {result.get('error')}",
+                "success" if result.get("ok") else "danger",
+            )
+        elif action == "reject":
+            result = poster.reject(draft_id)
+            flash(
+                "Rejected." if result.get("ok") else f"Failed: {result.get('error')}",
+                "success" if result.get("ok") else "danger",
+            )
+        elif action == "edit_save":
+            raw_ids = request.form.getlist("media_ids")
+            try:
+                media_ids = [int(x) for x in raw_ids][:4]
+            except ValueError:
+                media_ids = []
+            db.set_draft_media(draft_id, media_ids)
+            result = poster.save_edit(draft_id, request.form.get("edited_text", ""))
+            flash(
+                "Edit & images saved." if result.get("ok") else f"Failed: {result.get('error')}",
+                "success" if result.get("ok") else "danger",
+            )
+        elif action == "attach_media":
+            raw_ids = request.form.getlist("media_ids")
+            try:
+                media_ids = [int(x) for x in raw_ids][:4]
+            except ValueError:
+                media_ids = []
+            db.set_draft_media(draft_id, media_ids)
+            flash("Images attached to draft (max 4).", "success")
+        return redirect(url_for("records_drafts", status=request.args.get("status", "pending")))
+
+    status = request.args.get("status", "pending")
+    status_filter = status if status != "all" else None
+    drafts = db.list_drafts(status=status_filter, limit=100)
+    library = db.list_media_assets(limit=100)
+    drafts_with_media = []
+    for d in drafts:
+        item = dict(d)
+        item["attached"] = db.get_draft_media(d["id"])
+        item["attached_ids"] = {a["id"] for a in item["attached"]}
+        drafts_with_media.append(item)
+
+    body = render_template_string(
+        """
+        <h2 class="mb-3">Content Drafts</h2>
+        <p class="text-muted">Attach up to 4 images from the <a href="{{ url_for('settings_media') }}">Media library</a> before Approve &amp; Post.</p>
+        <div class="mb-3">
+          <a class="btn btn-sm btn-outline-primary {% if status=='pending' %}active{% endif %}" href="{{ url_for('records_drafts', status='pending') }}">Pending</a>
+          <a class="btn btn-sm btn-outline-secondary {% if status=='posted' %}active{% endif %}" href="{{ url_for('records_drafts', status='posted') }}">Posted</a>
+          <a class="btn btn-sm btn-outline-secondary {% if status=='rejected' %}active{% endif %}" href="{{ url_for('records_drafts', status='rejected') }}">Rejected</a>
+          <a class="btn btn-sm btn-outline-secondary {% if status=='all' %}active{% endif %}" href="{{ url_for('records_drafts', status='all') }}">All</a>
+        </div>
+        {% if not drafts %}
+          <p class="text-muted">No drafts found.</p>
+        {% endif %}
+        {% for d in drafts %}
+          <div class="card mb-3 shadow-sm">
+            <div class="card-body">
+              <div class="d-flex justify-content-between">
+                <h5 class="card-title">#{{ d.id }} · {{ d.kind }} · <span class="badge bg-secondary">{{ d.status }}</span></h5>
+                <small class="text-muted">{{ d.created_at }}</small>
+              </div>
+              {% if d.target_tweet_text %}
+                <p class="small text-muted mb-1">Original (@{{ d.target_author or '?' }}): {{ d.target_tweet_text[:280] }}</p>
+              {% endif %}
+              {% if d.attached %}
+                <div class="d-flex flex-wrap gap-2 mb-2">
+                  {% for a in d.attached %}
+                    <img src="{{ url_for('serve_media', filename=a.filename) }}" alt="" style="height:64px;width:64px;object-fit:cover;border-radius:4px;">
+                  {% endfor %}
+                </div>
+              {% endif %}
+              <form method="post" class="mt-2">
+                <input type="hidden" name="draft_id" value="{{ d.id }}">
+                <textarea name="edited_text" class="form-control mb-2" rows="3">{{ d.edited_text or d.generated_text }}</textarea>
+                {% if d.status == 'pending' %}
+                <div class="mb-2">
+                  <label class="form-label small">Attach images (max 4)</label>
+                  <div class="d-flex flex-wrap gap-2" style="max-height:160px;overflow:auto;">
+                    {% for m in library %}
+                      <label class="border rounded p-1 text-center" style="width:76px;">
+                        <img src="{{ url_for('serve_media', filename=m.filename) }}" style="height:56px;width:56px;object-fit:cover;display:block;margin:0 auto;">
+                        <input type="checkbox" name="media_ids" value="{{ m.id }}" {% if m.id in d.attached_ids %}checked{% endif %}>
+                      </label>
+                    {% else %}
+                      <span class="text-muted small">No images yet — upload in Media.</span>
+                    {% endfor %}
+                  </div>
+                </div>
+                <button name="action" value="approve" class="btn btn-success btn-sm">Approve & Post</button>
+                <button name="action" value="edit_save" class="btn btn-outline-primary btn-sm">Save Edit</button>
+                <button name="action" value="attach_media" class="btn btn-outline-secondary btn-sm">Save Images</button>
+                <button name="action" value="reject" class="btn btn-outline-danger btn-sm">Reject</button>
+                {% endif %}
+              </form>
+              <div class="small text-muted mt-2">{{ d.provider or '-' }} / {{ d.model or '-' }} · keyword={{ d.keyword or '-' }}</div>
+            </div>
+          </div>
+        {% endfor %}
+        """,
+        drafts=drafts_with_media,
+        library=library,
+        status=status,
+    )
+    return render_template_string(
+        RECORDS_SHELL, page_title="Drafts", active="drafts", body=body
+    )
+
+
+@app.route("/media/<path:filename>")
+@login_required
+def serve_media(filename):
+    """Serve uploaded media files (auth required)."""
+    return send_from_directory(media_root(), Path(filename).name)
+
+
+@app.route("/settings/media", methods=["GET", "POST"])
+@login_required
+def settings_media():
+    """Upload and manage the image library."""
+    db = get_db_connection()
+
+    if request.method == "POST":
+        action = request.form.get("action")
+        if action == "upload":
+            files = request.files.getlist("images")
+            saved = 0
+            for f in files:
+                if not f or not f.filename:
+                    continue
+                try:
+                    stored, original, mime, size = save_upload(f)
+                    path = str(media_root() / stored)
+                    db.create_media_asset(stored, original, mime, path, size)
+                    saved += 1
+                except Exception as e:
+                    flash(f"{f.filename}: {e}", "danger")
+            if saved:
+                flash(f"Uploaded {saved} image(s).", "success")
+        elif action == "delete":
+            try:
+                mid = int(request.form.get("media_id", "0"))
+            except ValueError:
+                mid = 0
+            row = db.delete_media_asset(mid)
+            if row:
+                delete_file(row.get("file_path") or row.get("filename"))
+                flash("Image deleted.", "success")
+            else:
+                flash("Image not found.", "warning")
+        return redirect(url_for("settings_media"))
+
+    assets = db.list_media_assets(limit=200)
+    body = render_template_string(
+        """
+        <h2>Media library</h2>
+        <p class="text-muted">Upload JPG/PNG/GIF/WEBP (max 5&nbsp;MB each). Attach up to 4 images per draft before posting.</p>
+        <form method="post" enctype="multipart/form-data" class="card shadow-sm p-3 mb-4">
+          <input type="hidden" name="action" value="upload">
+          <input type="file" name="images" accept="image/jpeg,image/png,image/gif,image/webp" multiple class="form-control mb-2" required>
+          <button class="btn btn-primary">Upload</button>
+        </form>
+        <div class="row g-3">
+          {% for a in assets %}
+          <div class="col-6 col-md-3 col-lg-2">
+            <div class="card h-100">
+              <img src="{{ url_for('serve_media', filename=a.filename) }}" class="card-img-top" style="height:120px;object-fit:cover;" alt="{{ a.original_name }}">
+              <div class="card-body p-2">
+                <div class="small text-truncate" title="{{ a.original_name }}">{{ a.original_name }}</div>
+                <form method="post" class="mt-1">
+                  <input type="hidden" name="action" value="delete">
+                  <input type="hidden" name="media_id" value="{{ a.id }}">
+                  <button class="btn btn-outline-danger btn-sm w-100" onclick="return confirm('Delete this image?')">Delete</button>
+                </form>
+              </div>
+            </div>
+          </div>
+          {% else %}
+          <div class="col-12"><p class="text-muted">No images uploaded yet.</p></div>
+          {% endfor %}
+        </div>
+        """,
+        assets=assets,
+    )
+    return render_template_string(
+        RECORDS_SHELL, page_title="Media", active="media", body=body
+    )
+
+
+@app.route("/records/replies")
+@login_required
+def records_replies():
+    db = get_db_connection()
+    page = max(int(request.args.get("page", 1)), 1)
+    limit = 50
+    offset = (page - 1) * limit
+    rows = db.list_replied_tweets(limit=limit, offset=offset)
+    quotes = db.list_quote_retweets(limit=20, offset=0)
+    tweets = db.list_posted_tweets(limit=20, offset=0)
+    threads = db.list_posted_threads(limit=20, offset=0)
+    body = render_template_string(
+        """
+        <h2 class="mb-3">Activity Records</h2>
+        <ul class="nav nav-tabs mb-3">
+          <li class="nav-item"><a class="nav-link active" href="{{ url_for('records_replies') }}">Replies</a></li>
+          <li class="nav-item"><a class="nav-link" href="{{ url_for('records_tweets') }}">Tweets & Threads</a></li>
+          <li class="nav-item"><a class="nav-link" href="{{ url_for('records_quotes') }}">Quotes</a></li>
+        </ul>
+        <div class="table-responsive card shadow-sm">
+          <table class="table table-sm mb-0">
+            <thead><tr><th>Tweet</th><th>Reply</th><th>Source</th><th>Keyword</th><th>When</th></tr></thead>
+            <tbody>
+            {% for r in rows %}
+              <tr>
+                <td>{{ r.tweet_id }}</td>
+                <td>{{ r.reply_tweet_id }}</td>
+                <td>{{ r.source }}</td>
+                <td>{{ r.keyword or '-' }}</td>
+                <td>{{ r.replied_at }}</td>
+              </tr>
+            {% else %}
+              <tr><td colspan="5" class="text-muted">No replies yet.</td></tr>
+            {% endfor %}
+            </tbody>
+          </table>
+        </div>
+        <div class="mt-3">
+          {% if page > 1 %}<a class="btn btn-sm btn-outline-secondary" href="{{ url_for('records_replies', page=page-1) }}">Prev</a>{% endif %}
+          <a class="btn btn-sm btn-outline-secondary" href="{{ url_for('records_replies', page=page+1) }}">Next</a>
+        </div>
+        <h4 class="mt-4">Recent original tweets (snapshot)</h4>
+        <ul>{% for t in tweets %}<li>{{ t.posted_at }} — {{ t.text[:120] }}…</li>{% else %}<li class="text-muted">None</li>{% endfor %}</ul>
+        <h4 class="mt-3">Recent threads (snapshot)</h4>
+        <ul>{% for t in threads %}<li>{{ t.posted_at }} — {{ t.first_tweet_id }}</li>{% else %}<li class="text-muted">None</li>{% endfor %}</ul>
+        <h4 class="mt-3">Recent quotes (snapshot)</h4>
+        <ul>{% for q in quotes %}<li>{{ q.posted_at }} — {{ q.text[:120] }}…</li>{% else %}<li class="text-muted">None</li>{% endfor %}</ul>
+        """,
+        rows=rows,
+        page=page,
+        tweets=tweets,
+        threads=threads,
+        quotes=quotes,
+    )
+    return render_template_string(
+        RECORDS_SHELL, page_title="Records", active="replies", body=body
+    )
+
+
+@app.route("/records/tweets")
+@login_required
+def records_tweets():
+    db = get_db_connection()
+    tweets = db.list_posted_tweets(limit=100)
+    threads = db.list_posted_threads(limit=100)
+    body = render_template_string(
+        """
+        <h2>Posted Tweets & Threads</h2>
+        <h4 class="mt-3">Tweets</h4>
+        <div class="table-responsive card"><table class="table table-sm mb-0">
+          <thead><tr><th>ID</th><th>Text</th><th>When</th></tr></thead>
+          <tbody>
+          {% for t in tweets %}<tr><td>{{ t.tweet_id }}</td><td>{{ t.text }}</td><td>{{ t.posted_at }}</td></tr>
+          {% else %}<tr><td colspan="3" class="text-muted">None</td></tr>{% endfor %}
+          </tbody></table></div>
+        <h4 class="mt-4">Threads</h4>
+        <div class="table-responsive card"><table class="table table-sm mb-0">
+          <thead><tr><th>Thread</th><th>First</th><th>When</th></tr></thead>
+          <tbody>
+          {% for t in threads %}<tr><td>{{ t.thread_id }}</td><td>{{ t.first_tweet_id }}</td><td>{{ t.posted_at }}</td></tr>
+          {% else %}<tr><td colspan="3" class="text-muted">None</td></tr>{% endfor %}
+          </tbody></table></div>
+        """,
+        tweets=tweets,
+        threads=threads,
+    )
+    return render_template_string(
+        RECORDS_SHELL, page_title="Tweets", active="replies", body=body
+    )
+
+
+@app.route("/records/quotes")
+@login_required
+def records_quotes():
+    db = get_db_connection()
+    rows = db.list_quote_retweets(limit=100)
+    body = render_template_string(
+        """
+        <h2>Quote Tweets</h2>
+        <div class="table-responsive card"><table class="table table-sm mb-0">
+          <thead><tr><th>Quote ID</th><th>Original</th><th>Text</th><th>When</th></tr></thead>
+          <tbody>
+          {% for r in rows %}
+            <tr><td>{{ r.quote_tweet_id }}</td><td>{{ r.original_tweet_id }}</td><td>{{ r.text }}</td><td>{{ r.posted_at }}</td></tr>
+          {% else %}
+            <tr><td colspan="4" class="text-muted">None</td></tr>
+          {% endfor %}
+          </tbody></table></div>
+        """,
+        rows=rows,
+    )
+    return render_template_string(
+        RECORDS_SHELL, page_title="Quotes", active="replies", body=body
+    )
+
+
+@app.route("/settings/ai", methods=["GET", "POST"])
+@login_required
+def settings_ai():
+    """AI provider defaults and editable niche system instructions."""
+    db = get_db_connection()
+    config = Config()
+
+    if request.method == "POST":
+        action = request.form.get("action")
+        if action == "save_defaults":
+            data = config.config
+            data.setdefault("ai", {})
+            data["ai"]["provider"] = request.form.get("provider", "gemini")
+            data["ai"]["prompt_profile"] = request.form.get("prompt_profile", "default")
+            data["ai"]["temperature"] = float(request.form.get("temperature", 0.7))
+            Path(config.config_path).write_text(json.dumps(data, indent=2), encoding="utf-8")
+            # Mark default provider in DB
+            for p in db.list_ai_providers():
+                db.save_ai_provider(
+                    {
+                        "provider": p["provider"],
+                        "api_key": None,
+                        "model": request.form.get(f"model_{p['provider']}") or p.get("model"),
+                        "enabled": p.get("enabled"),
+                        "is_default": p["provider"] == data["ai"]["provider"],
+                    }
+                )
+            flash("AI defaults saved.", "success")
+        elif action == "save_profile":
+            profile_id = request.form.get("profile_id")
+            db.save_prompt_profile(
+                {
+                    "id": int(profile_id) if profile_id else None,
+                    "name": request.form.get("name", "").strip() or "default",
+                    "content_type": request.form.get("content_type", "reply"),
+                    "system_instruction": request.form.get("system_instruction", ""),
+                    "user_prompt_template": request.form.get("user_prompt_template") or None,
+                    "is_active": bool(request.form.get("is_active")),
+                }
+            )
+            flash("Prompt profile saved.", "success")
+        elif action == "delete_profile":
+            db.delete_prompt_profile(int(request.form.get("profile_id")))
+            flash("Profile deleted.", "success")
+        return redirect(url_for("settings_ai"))
+
+    profiles = db.list_prompt_profiles()
+    providers = db.list_ai_providers()
+    ai = config.config.get("ai", {})
+    niche_names = sorted({p["name"] for p in profiles})
+    body = render_template_string(
+        """
+        <h2>AI Settings</h2>
+        <form method="post" class="card shadow-sm p-3 mb-4">
+          <input type="hidden" name="action" value="save_defaults">
+          <div class="row g-3">
+            <div class="col-md-4">
+              <label class="form-label">Default provider</label>
+              <select name="provider" class="form-select">
+                <option value="gemini" {% if ai.get('provider')=='gemini' %}selected{% endif %}>Gemini</option>
+                <option value="openai" {% if ai.get('provider')=='openai' %}selected{% endif %}>OpenAI</option>
+                <option value="anthropic" {% if ai.get('provider')=='anthropic' %}selected{% endif %}>Anthropic</option>
+              </select>
+            </div>
+            <div class="col-md-4">
+              <label class="form-label">Active niche profile</label>
+              <select name="prompt_profile" class="form-select">
+                {% for n in niche_names %}
+                  <option value="{{ n }}" {% if ai.get('prompt_profile')==n %}selected{% endif %}>{{ n }}</option>
+                {% endfor %}
+              </select>
+            </div>
+            <div class="col-md-4">
+              <label class="form-label">Temperature</label>
+              <input type="number" step="0.1" min="0" max="2" name="temperature" class="form-control" value="{{ ai.get('temperature', 0.7) }}">
+            </div>
+            {% for p in providers %}
+            <div class="col-md-4">
+              <label class="form-label">{{ p.provider }} model</label>
+              <input name="model_{{ p.provider }}" class="form-control" value="{{ p.model or '' }}">
+            </div>
+            {% endfor %}
+          </div>
+          <button class="btn btn-primary mt-3">Save defaults</button>
+        </form>
+
+        <h3>System instruction niches</h3>
+        <p class="text-muted">Edit prompts for web3, blockchain, default, or add your own niche.</p>
+        {% for p in profiles %}
+        <form method="post" class="card shadow-sm p-3 mb-3">
+          <input type="hidden" name="action" value="save_profile">
+          <input type="hidden" name="profile_id" value="{{ p.id }}">
+          <div class="row g-2">
+            <div class="col-md-3"><input name="name" class="form-control" value="{{ p.name }}" placeholder="niche name"></div>
+            <div class="col-md-3">
+              <select name="content_type" class="form-select">
+                {% for t in ['reply','quote','tweet','thread'] %}
+                <option value="{{ t }}" {% if p.content_type==t %}selected{% endif %}>{{ t }}</option>
+                {% endfor %}
+              </select>
+            </div>
+            <div class="col-md-3 form-check mt-2">
+              <input class="form-check-input" type="checkbox" name="is_active" id="active{{ p.id }}" {% if p.is_active %}checked{% endif %}>
+              <label class="form-check-label" for="active{{ p.id }}">Active</label>
+            </div>
+          </div>
+          <textarea name="system_instruction" class="form-control mt-2" rows="4">{{ p.system_instruction }}</textarea>
+          <div class="mt-2">
+            <button class="btn btn-sm btn-primary">Save</button>
+            <button class="btn btn-sm btn-outline-danger" name="action" value="delete_profile" onclick="return confirm('Delete?')">Delete</button>
+          </div>
+        </form>
+        {% endfor %}
+
+        <form method="post" class="card shadow-sm p-3">
+          <h5>Add niche profile</h5>
+          <input type="hidden" name="action" value="save_profile">
+          <div class="row g-2">
+            <div class="col-md-3"><input name="name" class="form-control" placeholder="e.g. web3" required></div>
+            <div class="col-md-3">
+              <select name="content_type" class="form-select">
+                <option value="reply">reply</option>
+                <option value="quote">quote</option>
+                <option value="tweet">tweet</option>
+                <option value="thread">thread</option>
+              </select>
+            </div>
+            <div class="col-md-3 form-check mt-2">
+              <input class="form-check-input" type="checkbox" name="is_active" id="newActive" checked>
+              <label class="form-check-label" for="newActive">Active</label>
+            </div>
+          </div>
+          <textarea name="system_instruction" class="form-control mt-2" rows="4" placeholder="System instruction for this niche..." required></textarea>
+          <button class="btn btn-success mt-2">Create</button>
+        </form>
+        """,
+        profiles=profiles,
+        providers=providers,
+        ai=ai,
+        niche_names=niche_names,
+    )
+    return render_template_string(
+        RECORDS_SHELL, page_title="AI Settings", active="ai", body=body
+    )
+
+
+@app.route("/settings/safety", methods=["GET", "POST"])
+@login_required
+def settings_safety():
+    """Rate budgets, quality gates, tip refusal, and recent blocks."""
+    from src.quality_safety import (
+        get_usage_stats,
+        list_safety_events,
+        count_safety_events_today,
+        DEFAULT_SAFETY,
+    )
+
+    config = Config()
+    db = get_db_connection()
+
+    if request.method == "POST":
+        data = config.config
+        data.setdefault("safety", dict(DEFAULT_SAFETY))
+        s = data["safety"]
+        s["enabled"] = bool(request.form.get("enabled"))
+        s["refuse_risky_tips"] = bool(request.form.get("refuse_risky_tips"))
+        s["block_all_caps"] = bool(request.form.get("block_all_caps"))
+        s["block_duplicates"] = bool(request.form.get("block_duplicates"))
+        for key in (
+            "daily_post_limit",
+            "monthly_post_limit",
+            "max_pending_drafts",
+            "min_chars",
+            "max_chars",
+            "max_hashtags",
+            "max_links",
+        ):
+            try:
+                s[key] = int(request.form.get(key, s.get(key, 0)))
+            except ValueError:
+                pass
+        phrases = request.form.get("custom_block_phrases", "")
+        s["custom_block_phrases"] = [
+            p.strip() for p in phrases.splitlines() if p.strip()
+        ]
+        Path(config.config_path).write_text(
+            json.dumps(data, indent=2), encoding="utf-8"
+        )
+        flash("Safety settings saved.", "success")
+        return redirect(url_for("settings_safety"))
+
+    safety = config.get_safety_config()
+    usage = get_usage_stats(db)
+    events = list_safety_events(db, limit=40)
+    blocked_today = count_safety_events_today(db)
+    body = render_template_string(
+        """
+        <h2>Safety &amp; quality</h2>
+        <p class="text-muted">Rate budgets, spam gates, and risky-tip refusal for Telegram compose and auto runs.</p>
+
+        <div class="row g-3 mb-4">
+          <div class="col-md-3"><div class="card p-3"><div class="text-muted small">Posts today</div><div class="h4 mb-0">{{ usage.posts_today }} / {{ safety.daily_post_limit }}</div></div></div>
+          <div class="col-md-3"><div class="card p-3"><div class="text-muted small">Posts this month</div><div class="h4 mb-0">{{ usage.posts_month }} / {{ safety.monthly_post_limit }}</div></div></div>
+          <div class="col-md-3"><div class="card p-3"><div class="text-muted small">Pending drafts</div><div class="h4 mb-0">{{ usage.pending_drafts }} / {{ safety.max_pending_drafts }}</div></div></div>
+          <div class="col-md-3"><div class="card p-3"><div class="text-muted small">Blocked today</div><div class="h4 mb-0">{{ blocked_today }}</div></div></div>
+        </div>
+
+        <form method="post" class="card shadow-sm p-3 mb-4">
+          <div class="form-check mb-2">
+            <input class="form-check-input" type="checkbox" name="enabled" id="enabled" {% if safety.enabled %}checked{% endif %}>
+            <label class="form-check-label" for="enabled">Enable safety gates</label>
+          </div>
+          <div class="row g-3">
+            <div class="col-md-3"><label class="form-label">Daily post limit</label><input type="number" name="daily_post_limit" class="form-control" value="{{ safety.daily_post_limit }}" min="0"></div>
+            <div class="col-md-3"><label class="form-label">Monthly post limit</label><input type="number" name="monthly_post_limit" class="form-control" value="{{ safety.monthly_post_limit }}" min="0"></div>
+            <div class="col-md-3"><label class="form-label">Max pending drafts</label><input type="number" name="max_pending_drafts" class="form-control" value="{{ safety.max_pending_drafts }}" min="0"></div>
+            <div class="col-md-3"><label class="form-label">Min chars</label><input type="number" name="min_chars" class="form-control" value="{{ safety.min_chars }}" min="1"></div>
+            <div class="col-md-3"><label class="form-label">Max chars</label><input type="number" name="max_chars" class="form-control" value="{{ safety.max_chars }}" min="1" max="280"></div>
+            <div class="col-md-3"><label class="form-label">Max hashtags</label><input type="number" name="max_hashtags" class="form-control" value="{{ safety.max_hashtags }}" min="0"></div>
+            <div class="col-md-3"><label class="form-label">Max links</label><input type="number" name="max_links" class="form-control" value="{{ safety.max_links }}" min="0"></div>
+          </div>
+          <div class="form-check mt-3">
+            <input class="form-check-input" type="checkbox" name="refuse_risky_tips" id="refuse_risky_tips" {% if safety.refuse_risky_tips %}checked{% endif %}>
+            <label class="form-check-label" for="refuse_risky_tips">Refuse risky Telegram tips (scams, guarantees, keys, etc.)</label>
+          </div>
+          <div class="form-check">
+            <input class="form-check-input" type="checkbox" name="block_all_caps" id="block_all_caps" {% if safety.block_all_caps %}checked{% endif %}>
+            <label class="form-check-label" for="block_all_caps">Block ALL-CAPS spam</label>
+          </div>
+          <div class="form-check mb-3">
+            <input class="form-check-input" type="checkbox" name="block_duplicates" id="block_duplicates" {% if safety.block_duplicates %}checked{% endif %}>
+            <label class="form-check-label" for="block_duplicates">Block duplicate text (7 days)</label>
+          </div>
+          <label class="form-label">Custom block phrases (one per line)</label>
+          <textarea name="custom_block_phrases" class="form-control mb-3" rows="4" placeholder="guaranteed profit">{{ phrases }}</textarea>
+          <button class="btn btn-primary">Save safety settings</button>
+        </form>
+
+        <h4>Recent blocks / refusals</h4>
+        <div class="table-responsive card">
+          <table class="table table-sm mb-0">
+            <thead><tr><th>When</th><th>Type</th><th>Message</th></tr></thead>
+            <tbody>
+            {% for e in events %}
+              <tr><td>{{ e.created_at }}</td><td><span class="badge bg-warning text-dark">{{ e.event_type }}</span></td><td>{{ e.message }}</td></tr>
+            {% else %}
+              <tr><td colspan="3" class="text-muted">None yet.</td></tr>
+            {% endfor %}
+            </tbody>
+          </table>
+        </div>
+        """,
+        safety=safety,
+        usage=usage,
+        events=events,
+        blocked_today=blocked_today,
+        phrases="\n".join(safety.get("custom_block_phrases") or []),
+    )
+    return render_template_string(
+        RECORDS_SHELL, page_title="Safety", active="safety", body=body
     )
 
 
