@@ -11,6 +11,7 @@ from typing import List, Optional, Tuple
 from functools import wraps
 from datetime import datetime
 
+from werkzeug.middleware.proxy_fix import ProxyFix
 from werkzeug.security import check_password_hash, generate_password_hash
 import schedule
 
@@ -42,8 +43,20 @@ app = Flask(__name__)
 # Use environment variable for secret key in production, fallback for development
 app.secret_key = os.getenv("FLASK_SECRET_KEY", "change-this-secret-key-in-production")
 
+# Render (and similar hosts) terminate TLS and forward HTTP to gunicorn.
+# Without ProxyFix, redirects/cookies use http:// and sessions fail after login.
+app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1, x_prefix=1)
+_is_render = bool(os.getenv("RENDER") or os.getenv("RENDER_EXTERNAL_URL"))
+_prefer_https = _is_render or os.getenv("FORCE_HTTPS", "").lower() in ("1", "true", "yes")
+app.config.update(
+    SESSION_COOKIE_HTTPONLY=True,
+    SESSION_COOKIE_SAMESITE="Lax",
+    SESSION_COOKIE_SECURE=_prefer_https,
+    PREFERRED_URL_SCHEME="https" if _prefer_https else "http",
+)
+
 ADMIN_EMAIL = (os.getenv("ADMIN_EMAIL") or "").strip().lower()
-ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD") or ""
+ADMIN_PASSWORD = (os.getenv("ADMIN_PASSWORD") or "").strip()
 _ADMIN_PASSWORD_HASH = (
     generate_password_hash(ADMIN_PASSWORD) if ADMIN_PASSWORD else None
 )
