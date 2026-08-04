@@ -542,7 +542,7 @@ class Database:
         row = cursor.fetchone()
         if row and row.get("c", 0) == 0:
             for provider, model, is_default in [
-                ("gemini", "gemini-1.5-flash", True),
+                ("gemini", "gemini-2.5-flash", True),
                 ("openai", "gpt-4o-mini", False),
                 ("anthropic", "claude-3-5-haiku-latest", False),
                 ("agentrouter", "gpt-4o-mini", False),
@@ -570,6 +570,29 @@ class Database:
                     """,
                     ("agentrouter", "gpt-4o-mini"),
                 )
+            # Migrate retired Gemini model ids stored in settings
+            cursor.execute(
+                """
+                UPDATE ai_provider_settings
+                SET model = 'gemini-2.5-flash'
+                WHERE provider = 'gemini'
+                  AND model IN (
+                    'gemini-pro',
+                    'gemini-1.5-flash',
+                    'gemini-1.5-flash-latest',
+                    'gemini-2.0-flash',
+                    'gemini-2.0-flash-001'
+                  )
+                """
+            )
+            cursor.execute(
+                """
+                UPDATE ai_provider_settings
+                SET model = 'gemini-2.5-pro'
+                WHERE provider = 'gemini'
+                  AND model IN ('gemini-1.5-pro', 'gemini-1.5-pro-latest')
+                """
+            )
     
     def _row_to_dict(self, row: Dict[str, Any]) -> Dict[str, Any]:
         """Convert RealDictRow to a plain dict."""

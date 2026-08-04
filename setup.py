@@ -91,7 +91,7 @@ def setup_config():
         "prompt_profile": get_input("Niche profile name", "default"),
         "temperature": 0.7,
     }
-    config["gemini"] = {"enabled": False, "api_key": "", "model": "gemini-1.5-flash"}
+    config["gemini"] = {"enabled": False, "api_key": "", "model": "gemini-2.5-flash"}
     config["openai"] = {"enabled": False, "api_key": "", "model": "gpt-4o-mini"}
     config["anthropic"] = {
         "enabled": False,
@@ -101,7 +101,7 @@ def setup_config():
     config["agentrouter"] = {
         "enabled": False,
         "api_key": "",
-        "model": "gpt-4o-mini",
+        "model": "gpt-5.6-sol",
         "base_url": "https://agentrouter.org/v1",
     }
 

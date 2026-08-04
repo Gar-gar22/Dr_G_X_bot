@@ -103,11 +103,12 @@ def _chat_model():
         if not api_key:
             raise RuntimeError("Gemini selected but GEMINI_API_KEY is missing")
         from langchain_google_genai import ChatGoogleGenerativeAI
+        from ..ai_provider import normalize_gemini_model
 
-        model_name = (
+        model_name = normalize_gemini_model(
             (cfg_dict.get("gemini") or {}).get("model")
             or os.getenv("GEMINI_MODEL")
-            or "gemini-1.5-flash"
+            or None
         )
         return ChatGoogleGenerativeAI(
             model=model_name,

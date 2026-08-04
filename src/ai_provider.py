@@ -8,6 +8,23 @@ logger = logging.getLogger(__name__)
 
 AGENTROUTER_DEFAULT_BASE_URL = "https://agentrouter.org/v1"
 AGENTROUTER_DEFAULT_MODEL = "gpt-4o-mini"
+GEMINI_DEFAULT_MODEL = "gemini-2.5-flash"
+# Retired / renamed Gemini model ids → current flash/pro
+_GEMINI_MODEL_ALIASES = {
+    "gemini-pro": GEMINI_DEFAULT_MODEL,
+    "gemini-1.5-flash": GEMINI_DEFAULT_MODEL,
+    "gemini-1.5-flash-latest": GEMINI_DEFAULT_MODEL,
+    "gemini-1.5-pro": "gemini-2.5-pro",
+    "gemini-1.5-pro-latest": "gemini-2.5-pro",
+    "gemini-2.0-flash": GEMINI_DEFAULT_MODEL,
+    "gemini-2.0-flash-001": GEMINI_DEFAULT_MODEL,
+    "gemini-2.0-flash-lite": "gemini-2.5-flash-lite",
+}
+
+
+def normalize_gemini_model(model: Optional[str]) -> str:
+    name = (model or "").strip() or GEMINI_DEFAULT_MODEL
+    return _GEMINI_MODEL_ALIASES.get(name, name)
 
 
 def agentrouter_api_key(config: Optional[Dict[str, Any]] = None) -> Optional[str]:
@@ -67,9 +84,7 @@ class GeminiProvider(AIProvider):
     ) -> str:
         from google.genai import types
 
-        model_name = model or "gemini-1.5-flash"
-        if model_name == "gemini-pro":
-            model_name = "gemini-1.5-pro"
+        model_name = normalize_gemini_model(model)
         prompt = f"{system.strip()}\n\n{user.strip()}"
         response = self.client.models.generate_content(
             model=model_name,
@@ -246,7 +261,7 @@ def resolve_provider_config(
             temperature,
         )
     if name == "gemini" and gemini_key:
-        return "gemini", gemini_key, (config.get("gemini") or {}).get("model", "gemini-1.5-flash"), temperature
+        return "gemini", gemini_key, (config.get("gemini") or {}).get("model", GEMINI_DEFAULT_MODEL), temperature
 
     if ar_key and (config.get("agentrouter") or {}).get("enabled", bool(ar_key)):
         return "agentrouter", ar_key, ar_model, temperature
@@ -260,7 +275,7 @@ def resolve_provider_config(
             temperature,
         )
     if gemini_key and gemini_enabled:
-        return "gemini", gemini_key, (config.get("gemini") or {}).get("model", "gemini-1.5-flash"), temperature
+        return "gemini", gemini_key, (config.get("gemini") or {}).get("model", GEMINI_DEFAULT_MODEL), temperature
 
     return None, None, None, temperature
 
@@ -308,7 +323,7 @@ def generate_with_resolved_provider(
         text = provider.generate(
             system,
             user,
-            model=model or "",
+            model=normalize_gemini_model(model) if name == "gemini" else (model or ""),
             temperature=temperature,
             max_tokens=max_tokens,
         )
