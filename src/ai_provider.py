@@ -85,7 +85,12 @@ def agentrouter_base_url(config: Optional[Dict[str, Any]] = None) -> str:
 
 def agentrouter_default_headers() -> Dict[str, str]:
     """Headers AgentRouter accepts for non-Claude-Code / non-Codex clients."""
-    return dict(AGENTROUTER_DEFAULT_HEADERS)
+    headers = dict(AGENTROUTER_DEFAULT_HEADERS)
+    # Optional shared secret when AGENTROUTER_BASE_URL points at scripts/agentrouter_proxy.py
+    proxy_token = (os.getenv("AGENTROUTER_PROXY_TOKEN") or "").strip()
+    if proxy_token:
+        headers["X-AgentRouter-Proxy-Token"] = proxy_token
+    return headers
 
 
 def _agentrouter_http_client():
