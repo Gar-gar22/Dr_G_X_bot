@@ -92,6 +92,26 @@ def recent_messages(db, session_id: int, limit: int = 20) -> List[Dict[str, Any]
         cursor.close()
 
 
+def archive_session(db, session_id: int) -> None:
+    """Mark a session inactive so the next get_or_create starts a fresh one."""
+    cursor = db.conn.cursor()
+    try:
+        cursor.execute(
+            """
+            UPDATE agent_sessions
+            SET status = 'archived', updated_at = CURRENT_TIMESTAMP
+            WHERE id = %s
+            """,
+            (session_id,),
+        )
+        db.conn.commit()
+    except Exception:
+        db.conn.rollback()
+        raise
+    finally:
+        cursor.close()
+
+
 def create_action(
     db,
     *,

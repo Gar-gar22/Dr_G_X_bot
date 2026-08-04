@@ -7,6 +7,9 @@ from typing import Any, Dict, List, Optional
 
 logger = logging.getLogger(__name__)
 
+# Stable chat_id for admin dashboard agent chat (Telegram uses numeric chat ids).
+DASHBOARD_CHAT_ID = "dashboard"
+
 
 def agent_enabled() -> bool:
     return os.getenv("AGENT_ENABLED", "false").lower() in ("1", "true", "yes", "on")
@@ -38,7 +41,7 @@ def run_agent_turn(
     include_writes: bool = True,
 ) -> Dict[str, Any]:
     """
-    Run one agent turn for a Telegram user message.
+    Run one agent turn for a chat source (Telegram chat_id or DASHBOARD_CHAT_ID).
     Returns {ok, reply, pending_approvals, session_id, error?}.
     """
     if not agent_enabled():

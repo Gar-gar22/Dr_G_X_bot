@@ -1,5 +1,15 @@
-"""Agentic Telegram orchestrator — LangGraph + X tools."""
+"""Agentic orchestrator — LangGraph + X tools (Telegram + dashboard chat)."""
 
-from .runtime import agent_enabled, run_agent_turn, get_agent_status
+from .runtime import (
+    DASHBOARD_CHAT_ID,
+    agent_enabled,
+    get_agent_status,
+    run_agent_turn,
+)
 
-__all__ = ["agent_enabled", "run_agent_turn", "get_agent_status"]
+__all__ = [
+    "DASHBOARD_CHAT_ID",
+    "agent_enabled",
+    "get_agent_status",
+    "run_agent_turn",
+]

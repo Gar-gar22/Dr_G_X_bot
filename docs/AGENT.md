@@ -1,7 +1,15 @@
-# Agentic Telegram + X tools
+# Agentic chat + X tools
 
-Natural-language Telegram chat drives a LangGraph multi-agent system.
-X search/post APIs are **tools**. Safe writes can auto-post; risky ones need Telegram Approve.
+Natural-language chat drives a LangGraph multi-agent system from **two sources**:
+
+| Source | Entry |
+|--------|--------|
+| Telegram | Free-text in the authorized chat |
+| Admin dashboard | **Chat** page (`/agent/chat`) |
+
+X search/post APIs are **tools**. Safe writes can auto-post; risky ones need Approve (Telegram buttons and/or **Drafts**).
+
+Sessions are keyed by `chat_id`: Telegram uses the numeric chat id; the dashboard uses `dashboard` (isolated history). Both share the same agent tools and MITL drafts.
 
 ## Enable
 
@@ -35,7 +43,14 @@ gunicorn -w 1 -b 0.0.0.0:$PORT --timeout 120 dashboard:app
 
 ## How to use
 
-1. Message your bot in Telegram (authorized chat only).
+### Dashboard
+1. Open **Chat** in the admin sidebar (`/agent/chat`).
+2. Type naturally (same prompts as Telegram).
+3. Use **New chat** to archive the current dashboard session and start fresh.
+4. Risky writes → **Drafts** (and Telegram Approve if Telegram is configured).
+
+### Telegram
+1. Message your bot (authorized chat only).
 2. `/start` — help  
 3. `/status` — agent flag, daily post count, recent tool actions  
 4. Free text examples:
@@ -65,11 +80,11 @@ When `AGENT_ENABLED=false`, classic photo+tip compose and batch MITL still work.
 
 ## Code map
 
-- [`src/agent/runtime.py`](../src/agent/runtime.py) — `run_agent_turn`, `agent_enabled`, `/status` data  
+- [`src/agent/runtime.py`](../src/agent/runtime.py) — `run_agent_turn`, `DASHBOARD_CHAT_ID`, `/status` data  
 - [`src/agent/graph.py`](../src/agent/graph.py) — LangGraph specialists  
 - [`src/agent/tools/x_tools.py`](../src/agent/tools/x_tools.py) — X tools + MITL queue  
 - [`src/telegram_approver.py`](../src/telegram_approver.py) — free-text → agent  
-
+- Dashboard — `/agent/chat`, `POST /api/agent/chat`, `GET /api/agent/chat/history`
 ## Troubleshooting
 
 | Issue | Fix |

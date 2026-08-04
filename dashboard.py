@@ -224,6 +224,11 @@ ADMIN_SIDEBAR = """
             </a>
           </li>
           <li>
+            <a href="{{ url_for('agent_chat') }}" class="nav-link {% if active=='chat' %}active{% endif %}">
+              <i class="bi bi-chat-dots me-2"></i> Chat
+            </a>
+          </li>
+          <li>
             <a href="{{ url_for('records_agent') }}" class="nav-link {% if active=='agent' %}active{% endif %}">
               <i class="bi bi-cpu me-2"></i> Agent
             </a>
@@ -1963,6 +1968,233 @@ def settings_automation():
 RECORDS_SHELL = ADMIN_SHELL
 
 
+def _serialize_agent_message(row: dict) -> dict:
+    created = row.get("created_at")
+    return {
+        "id": row.get("id"),
+        "role": row.get("role"),
+        "content": row.get("content") or "",
+        "created_at": created.isoformat() if hasattr(created, "isoformat") else str(created or ""),
+    }
+
+
+@app.route("/agent/chat")
+@login_required
+def agent_chat():
+    """Admin dashboard chat with the same LangGraph agent as Telegram."""
+    from src.agent import agent_enabled
+
+    enabled = agent_enabled()
+    body = render_template_string(
+        """
+        <div class="agent-chat">
+          <div class="agent-chat-header">
+            <div>
+              <h2 class="mb-1">Agent chat</h2>
+              <p class="text-muted mb-0 small">
+                Same agent as Telegram · session <code>dashboard</code>
+                · {% if enabled %}<span class="text-success">AGENT_ENABLED</span>{% else %}<span class="text-warning">AGENT_ENABLED is false</span>{% endif %}
+                · <a href="{{ url_for('records_drafts') }}">Drafts</a>
+                · <a href="{{ url_for('records_agent') }}">Activity</a>
+              </p>
+            </div>
+            <button type="button" class="btn btn-outline-secondary btn-sm" id="agentChatNew">
+              <i class="bi bi-plus-lg me-1"></i>New chat
+            </button>
+          </div>
+
+          <div class="agent-chat-panel card shadow-sm">
+            <div class="agent-chat-messages" id="agentChatMessages" aria-live="polite">
+              <div class="agent-chat-empty text-muted" id="agentChatEmpty">
+                Send a message to search X, draft posts, or queue replies.
+                Risky writes still go to Drafts / Telegram Approve.
+              </div>
+            </div>
+            <form class="agent-chat-compose" id="agentChatForm" autocomplete="off">
+              <textarea
+                id="agentChatInput"
+                class="form-control"
+                rows="2"
+                placeholder="e.g. draft a tweet about SOL fees…"
+                {% if not enabled %}disabled{% endif %}
+              ></textarea>
+              <button type="submit" class="btn btn-primary" id="agentChatSend" {% if not enabled %}disabled{% endif %}>
+                <i class="bi bi-send me-1"></i>Send
+              </button>
+            </form>
+          </div>
+        </div>
+
+        <script>
+        (function () {
+          var box = document.getElementById('agentChatMessages');
+          var empty = document.getElementById('agentChatEmpty');
+          var form = document.getElementById('agentChatForm');
+          var input = document.getElementById('agentChatInput');
+          var sendBtn = document.getElementById('agentChatSend');
+          var newBtn = document.getElementById('agentChatNew');
+          var enabled = {{ 'true' if enabled else 'false' }};
+
+          function esc(s) {
+            var d = document.createElement('div');
+            d.textContent = s == null ? '' : String(s);
+            return d.innerHTML;
+          }
+
+          function renderMsg(role, content, meta) {
+            if (empty) empty.style.display = 'none';
+            var el = document.createElement('div');
+            el.className = 'agent-chat-bubble agent-chat-' + (role === 'user' ? 'user' : 'assistant');
+            var label = role === 'user' ? 'You' : 'Agent';
+            el.innerHTML =
+              '<div class="agent-chat-meta">' + esc(label) + (meta ? ' · ' + esc(meta) : '') + '</div>' +
+              '<div class="agent-chat-text">' + esc(content).replace(/\\n/g, '<br>') + '</div>';
+            box.appendChild(el);
+            box.scrollTop = box.scrollHeight;
+            return el;
+          }
+
+          function setBusy(busy) {
+            sendBtn.disabled = busy || !enabled;
+            input.disabled = busy || !enabled;
+            sendBtn.innerHTML = busy
+              ? '<span class="spinner-border spinner-border-sm me-1"></span>Thinking…'
+              : '<i class="bi bi-send me-1"></i>Send';
+          }
+
+          function loadHistory() {
+            return fetch('{{ url_for("api_agent_chat_history") }}')
+              .then(function (r) { return r.json(); })
+              .then(function (data) {
+                box.querySelectorAll('.agent-chat-bubble').forEach(function (n) { n.remove(); });
+                if (empty) empty.style.display = 'block';
+                (data.messages || []).forEach(function (m) {
+                  renderMsg(m.role, m.content, m.created_at);
+                });
+              })
+              .catch(function (e) {
+                renderMsg('assistant', 'Could not load history: ' + e);
+              });
+          }
+
+          form.addEventListener('submit', function (ev) {
+            ev.preventDefault();
+            if (!enabled) return;
+            var text = (input.value || '').trim();
+            if (!text) return;
+            renderMsg('user', text);
+            input.value = '';
+            setBusy(true);
+            var thinking = renderMsg('assistant', 'Thinking…');
+            fetch('{{ url_for("api_agent_chat") }}', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ message: text })
+            })
+              .then(function (r) { return r.json().then(function (j) { return { ok: r.ok, j: j }; }); })
+              .then(function (res) {
+                thinking.remove();
+                if (res.j.ok) {
+                  renderMsg('assistant', res.j.reply || 'OK.');
+                } else {
+                  renderMsg('assistant', res.j.error || res.j.reply || 'Agent failed');
+                }
+              })
+              .catch(function (e) {
+                thinking.remove();
+                renderMsg('assistant', 'Request failed: ' + e);
+              })
+              .finally(function () { setBusy(false); input.focus(); });
+          });
+
+          input.addEventListener('keydown', function (ev) {
+            if (ev.key === 'Enter' && !ev.shiftKey) {
+              ev.preventDefault();
+              form.requestSubmit();
+            }
+          });
+
+          newBtn.addEventListener('click', function () {
+            if (!confirm('Start a new dashboard chat? Current history stays in Agent activity.')) return;
+            setBusy(true);
+            fetch('{{ url_for("api_agent_chat_new") }}', { method: 'POST' })
+              .then(function (r) { return r.json(); })
+              .then(function () { return loadHistory(); })
+              .finally(function () { setBusy(false); input.focus(); });
+          });
+
+          loadHistory();
+        })();
+        </script>
+        """,
+        enabled=enabled,
+    )
+    return render_admin("Chat", "chat", body)
+
+
+@app.route("/api/agent/chat/history")
+@login_required
+def api_agent_chat_history():
+    """JSON message history for the dashboard agent session."""
+    from src.agent import DASHBOARD_CHAT_ID, memory as agent_memory
+
+    db = None
+    try:
+        db = get_db_connection()
+        session = agent_memory.get_or_create_session(db, DASHBOARD_CHAT_ID)
+        rows = agent_memory.recent_messages(db, int(session["id"]), limit=80)
+        return jsonify(
+            {
+                "ok": True,
+                "session_id": session["id"],
+                "chat_id": DASHBOARD_CHAT_ID,
+                "messages": [_serialize_agent_message(r) for r in rows],
+            }
+        )
+    except Exception as e:
+        logger.error(f"agent chat history error: {e}", exc_info=True)
+        return jsonify({"ok": False, "error": str(e), "messages": []}), 500
+
+
+@app.route("/api/agent/chat", methods=["POST"])
+@login_required
+def api_agent_chat():
+    """Send one dashboard message through run_agent_turn."""
+    from src.agent import DASHBOARD_CHAT_ID, run_agent_turn
+
+    data = request.get_json(silent=True) or {}
+    text = (data.get("message") or "").strip()
+    if not text:
+        return jsonify({"ok": False, "error": "Empty message"}), 400
+
+    telegram = None
+    try:
+        telegram = get_telegram_approver()
+    except Exception:
+        telegram = None
+
+    result = run_agent_turn(DASHBOARD_CHAT_ID, text, telegram=telegram)
+    status = 200 if result.get("ok") else 400
+    return jsonify(result), status
+
+
+@app.route("/api/agent/chat/new", methods=["POST"])
+@login_required
+def api_agent_chat_new():
+    """Archive the active dashboard session and start fresh."""
+    from src.agent import DASHBOARD_CHAT_ID, memory as agent_memory
+
+    db = None
+    try:
+        db = get_db_connection()
+        session = agent_memory.get_or_create_session(db, DASHBOARD_CHAT_ID)
+        agent_memory.archive_session(db, int(session["id"]))
+        fresh = agent_memory.get_or_create_session(db, DASHBOARD_CHAT_ID)
+        return jsonify({"ok": True, "session_id": fresh["id"]})
+    except Exception as e:
+        logger.error(f"agent chat new error: {e}", exc_info=True)
+        return jsonify({"ok": False, "error": str(e)}), 500
+
 
 @app.route("/records/agent")
 @login_required
@@ -1988,8 +2220,8 @@ def records_agent():
         <h2 class="mb-3">Agent activity</h2>
         <p class="text-muted">
           AGENT_ENABLED={{ 'true' if enabled else 'false' }}.
-          Telegram free-text uses the LangGraph agent when enabled.
-          Risky X writes appear as Drafts for Approve.
+          Chat sources: <a href="{{ url_for('agent_chat') }}">Dashboard</a> (chat_id <code>dashboard</code>)
+          and Telegram. Risky X writes appear as Drafts for Approve.
         </p>
         <div class="row g-3">
           <div class="col-md-5">
