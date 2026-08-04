@@ -11,7 +11,7 @@ X search/post APIs are **tools**. Safe writes can auto-post; risky ones need App
 
 Sessions are keyed by `chat_id`: Telegram uses the numeric chat id; the dashboard uses `dashboard` (isolated history). Both share the same agent tools and MITL drafts.
 
-**Provider switching:** Choose the default provider under **Credentials** or **AI Settings** (saved to DB). That choice drives the agent — Render’s `AI_PROVIDER` env only seeds the default when no provider is stored yet. Put a real key for each provider you want to test (`OPENAI_API_KEY`, `AGENTROUTER_API_KEY`, `GEMINI_API_KEY`, `ANTHROPIC_API_KEY`).
+**Provider switching:** Choose the default provider under **Credentials** or **AI Settings** (saved to DB). That choice drives the agent — Render’s `AI_PROVIDER` env only seeds the default when no provider is stored yet. Put a real key for each provider you want to test (`OPENAI_API_KEY`, `GEMINI_API_KEY`, `ANTHROPIC_API_KEY`).
 
 ## Enable
 
@@ -19,14 +19,11 @@ Set on Render / `.env`:
 
 ```env
 AGENT_ENABLED=true
-AI_PROVIDER=agentrouter
-AGENTROUTER_API_KEY=sk-...
-# Allowed models: gpt-5.6-sol | claude-opus-4-8 | claude-opus-5
-# AGENTROUTER_MODEL=gpt-5.6-sol
-# Optional: AGENTROUTER_BASE_URL=https://agentrouter.org/v1
-# Or use direct OpenAI instead:
-# AI_PROVIDER=openai
-# OPENAI_API_KEY=sk-...
+AI_PROVIDER=openai
+OPENAI_API_KEY=sk-...
+# OPENAI_MODEL=gpt-4o-mini
+# Optional Azure / compatible host (not required for api.openai.com):
+# OPENAI_BASE_URL=https://api.openai.com/v1
 # AGENT_DRY_RUN=true          # force all writes to Approve
 # AGENT_MAX_TOOL_STEPS=8
 TELEGRAM_BOT_TOKEN=...
@@ -34,33 +31,7 @@ TELEGRAM_CHAT_ID=...
 MITL_ENABLED=true
 ```
 
-**AgentRouter** ([agentrouter.org](https://agentrouter.org)) is an OpenAI-compatible gateway. Create a token at https://agentrouter.org/console/token. Use either:
-
-```env
-# Native
-AI_PROVIDER=agentrouter
-AGENTROUTER_API_KEY=sk-...
-AGENTROUTER_BASE_URL=https://agentrouter.org/v1
-```
-
-or the [docs OpenAI-env style](https://docs.agentrouter.org/en/qwencode.html):
-
-```env
-OPENAI_API_KEY=sk-...                 # AgentRouter token
-OPENAI_BASE_URL=https://agentrouter.org/v1
-OPENAI_MODEL=gpt-5.6-sol
-AI_PROVIDER=openai                    # base URL routes to AgentRouter client
-```
-
-Both use the official **OpenAI Python SDK** under the hood (`base_url` + key). Do **not** point at `api.openai.com`.
-
-Allowed AgentRouter models for this bot: `gpt-5.6-sol` (default), `claude-opus-4-8`, `claude-opus-5`. Pick one under Credentials / AI Settings.
-
-AgentRouter rejects generic clients (`unauthorized client detected`). This app sends Codex-compatible `Originator` / `User-Agent` headers on AgentRouter requests.
-
-If Render gets **Aliyun WAF HTML** from AgentRouter, run the egress proxy (home PC or VPS) and set `AGENTROUTER_BASE_URL` / `OPENAI_BASE_URL` to that proxy’s `/v1` — see [AGENTROUTER_PROXY.md](AGENTROUTER_PROXY.md).
-
-OpenAI or AgentRouter are recommended for tool-calling. Anthropic / Gemini work via LangChain when configured.
+Supported providers: **openai** (recommended for tool-calling), **anthropic**, **gemini**.
 
 Keep **one** Gunicorn worker:
 
@@ -117,8 +88,6 @@ When `AGENT_ENABLED=false`, classic photo+tip compose and batch MITL still work.
 | Issue | Fix |
 |-------|-----|
 | “AGENT_ENABLED is false” | Set env and redeploy |
-| Agent error `model_dump` / AgentRouter | Almost always means base URL is `https://agentrouter.org` **without** `/v1`, or `OPENAI_BASE_URL` points there. Set `https://agentrouter.org/v1` (Credentials + env). Redeploy latest. |
-| AgentRouter `unauthorized client` / 401 | Redeploy latest build (Codex client headers). Confirm `AGENTROUTER_API_KEY` is a real AgentRouter token, not an OpenAI key. |
-| AgentRouter WAF HTML / `aliyun_waf` | Edge blocked Render IP. Switch provider, whitelist CIDRs, or run [egress proxy](AGENTROUTER_PROXY.md) on home PC/VPS. |
+| “OPENAI_API_KEY is missing” | Set a real OpenAI key and `AI_PROVIDER=openai` (Credentials or env) |
 | No posts, only drafts | Action was risky — Approve in Telegram/Drafts |
 | Conflict getUpdates | Only one web service; see TELEGRAM_SETUP.md |

@@ -48,31 +48,10 @@ def _chat_model():
     def _gemini_key() -> Optional[str]:
         return os.getenv("GEMINI_API_KEY") or (cfg_dict.get("gemini") or {}).get("api_key")
 
+    # Legacy AgentRouter selection remaps to OpenAI.
     if provider in ("agentrouter", "agent_router"):
-        from ..ai_provider import (
-            AGENTROUTER_DEFAULT_MODEL,
-            agentrouter_api_key,
-            build_agentrouter_chat_model,
-            normalize_agentrouter_model,
-        )
-
-        api_key = agentrouter_api_key(cfg_dict)
-        model_name = normalize_agentrouter_model(
-            os.getenv("AGENTROUTER_MODEL")
-            or os.getenv("OPENAI_MODEL")
-            or (cfg_dict.get("agentrouter") or {}).get("model")
-            or AGENTROUTER_DEFAULT_MODEL
-        )
-        if not api_key:
-            raise RuntimeError(
-                "AgentRouter selected but no key set. Use AGENTROUTER_API_KEY "
-                "or docs-style OPENAI_API_KEY + OPENAI_BASE_URL=https://agentrouter.org/v1"
-            )
-        return build_agentrouter_chat_model(
-            api_key=api_key,
-            model=model_name,
-            config=cfg_dict,
-        )
+        logger.warning("AgentRouter was removed; using OpenAI instead")
+        provider = "openai"
 
     if provider == "openai":
         from langchain_openai import ChatOpenAI
@@ -85,29 +64,21 @@ def _chat_model():
         )
         if not api_key:
             raise RuntimeError("OpenAI selected but OPENAI_API_KEY is missing")
-        # If this "OpenAI" setup is actually pointed at AgentRouter via env base URL,
-        # route through the AgentRouter builder (needs /v1 + client headers).
-        ambient_base = (
+        kwargs: Dict[str, Any] = {
+            "model": model_name,
+            "api_key": api_key,
+            "temperature": 0.4,
+        }
+        base = (
             os.getenv("OPENAI_BASE_URL")
             or os.getenv("OPENAI_API_BASE")
             or (cfg_dict.get("openai") or {}).get("base_url")
             or ""
-        ).strip().lower()
-        if "agentrouter.org" in ambient_base:
-            from ..ai_provider import build_agentrouter_chat_model
-
-            return build_agentrouter_chat_model(
-                api_key=api_key,
-                model=model_name,
-                config={
-                    **cfg_dict,
-                    "agentrouter": {
-                        **(cfg_dict.get("agentrouter") or {}),
-                        "base_url": ambient_base,
-                    },
-                },
-            )
-        return ChatOpenAI(model=model_name, api_key=api_key, temperature=0.4)
+        ).strip()
+        # Ignore leftover AgentRouter hosts; use official OpenAI by default.
+        if base and "agentrouter.org" not in base.lower():
+            kwargs["base_url"] = base.rstrip("/")
+        return ChatOpenAI(**kwargs)
 
     if provider == "anthropic":
         from langchain_anthropic import ChatAnthropic
@@ -140,7 +111,7 @@ def _chat_model():
         )
 
     raise RuntimeError(
-        f"Unknown AI provider '{provider}'. Choose openai, agentrouter, anthropic, or gemini."
+        f"Unknown AI provider '{provider}'. Choose openai, anthropic, or gemini."
     )
 
 

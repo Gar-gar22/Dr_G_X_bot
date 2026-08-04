@@ -81,9 +81,9 @@ def setup_config():
     print()
 
     provider = get_input(
-        "Default provider (gemini/openai/anthropic/agentrouter)", "gemini"
+        "Default provider (gemini/openai/anthropic)", "gemini"
     ).lower()
-    if provider not in ("gemini", "openai", "anthropic", "agentrouter"):
+    if provider not in ("gemini", "openai", "anthropic"):
         provider = "gemini"
 
     config["ai"] = {
@@ -98,18 +98,6 @@ def setup_config():
         "api_key": "",
         "model": "claude-3-5-haiku-latest",
     }
-    config["agentrouter"] = {
-        "enabled": False,
-        "api_key": "",
-        "model": "gpt-5.6-sol",
-        "base_url": "https://agentrouter.org/v1",
-    }
-    if provider == "agentrouter":
-        print("AgentRouter models: gpt-5.6-sol | claude-opus-4-8 | claude-opus-5")
-        ar_model = get_input("AgentRouter model", "gpt-5.6-sol")
-        from src.ai_provider import normalize_agentrouter_model
-
-        config["agentrouter"]["model"] = normalize_agentrouter_model(ar_model)
 
     use_ai = get_bool_input(f"Enable {provider} now?", default=True)
     if use_ai:

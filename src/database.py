@@ -545,7 +545,6 @@ class Database:
                 ("gemini", "gemini-3.5-flash", True),
                 ("openai", "gpt-4o-mini", False),
                 ("anthropic", "claude-3-5-haiku-latest", False),
-                ("agentrouter", "gpt-5.6-sol", False),
             ]:
                 cursor.execute(
                     """
@@ -556,35 +555,37 @@ class Database:
                     (provider, model, is_default),
                 )
         else:
-            # Ensure AgentRouter row exists on upgrades
+            # Retire AgentRouter rows from upgrades
             cursor.execute(
-                "SELECT 1 FROM ai_provider_settings WHERE provider = %s",
-                ("agentrouter",),
+                """
+                UPDATE ai_provider_settings
+                SET enabled = FALSE, is_default = FALSE
+                WHERE provider IN ('agentrouter', 'agent_router')
+                """
+            )
+            cursor.execute(
+                """
+                SELECT 1 FROM ai_provider_settings
+                WHERE is_default = TRUE
+                  AND provider NOT IN ('agentrouter', 'agent_router')
+                """
             )
             if not cursor.fetchone():
                 cursor.execute(
                     """
-                    INSERT INTO ai_provider_settings
-                        (provider, api_key, model, enabled, is_default)
-                    VALUES (%s, NULL, %s, FALSE, FALSE)
-                    """,
-                    ("agentrouter", "gpt-5.6-sol"),
+                    UPDATE ai_provider_settings
+                    SET is_default = TRUE
+                    WHERE provider = 'openai'
+                    """
                 )
-            else:
-                # Migrate to AgentRouter-allowed model ids
                 cursor.execute(
                     """
                     UPDATE ai_provider_settings
-                    SET model = 'gpt-5.6-sol'
-                    WHERE provider = 'agentrouter'
-                      AND (
-                        model IS NULL
-                        OR model = ''
-                        OR model NOT IN (
-                          'gpt-5.6-sol',
-                          'claude-opus-4-8',
-                          'claude-opus-5'
-                        )
+                    SET is_default = TRUE
+                    WHERE provider = 'gemini'
+                      AND NOT EXISTS (
+                        SELECT 1 FROM ai_provider_settings
+                        WHERE is_default = TRUE
                       )
                     """
                 )

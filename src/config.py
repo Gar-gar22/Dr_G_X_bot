@@ -28,11 +28,6 @@ class Config:
             "gemini": {"enabled": False},
             "openai": {"enabled": False},
             "anthropic": {"enabled": False},
-            "agentrouter": {
-                "enabled": False,
-                "base_url": "https://agentrouter.org/v1",
-                "model": "gpt-5.6-sol",
-            },
             "ai": {
                 "provider": os.getenv("AI_PROVIDER", "gemini"),
                 "prompt_profile": os.getenv("AI_PROMPT_PROFILE", "default"),
@@ -116,7 +111,7 @@ class Config:
                     if x_creds.get(key):
                         self.config["x_api"][key] = x_creds[key]
 
-            for provider in ("gemini", "openai", "anthropic", "agentrouter"):
+            for provider in ("gemini", "openai", "anthropic"):
                 row = db.get_ai_provider(provider)
                 if row:
                     self.config.setdefault(provider, {})
@@ -136,6 +131,22 @@ class Config:
                         self.config[provider]["api_key"] = legacy["api_key"]
                         if legacy.get("enabled") is not None:
                             self.config[provider]["enabled"] = legacy["enabled"]
+
+            # Legacy: if AgentRouter was the DB default, prefer OpenAI when available
+            try:
+                ar = db.get_ai_provider("agentrouter")
+                if ar and ar.get("is_default"):
+                    self.config.setdefault("ai", {})
+                    if self.config.get("openai", {}).get("api_key"):
+                        self.config["ai"]["provider"] = "openai"
+                    elif (self.config.get("ai") or {}).get("provider") in (
+                        "agentrouter",
+                        "agent_router",
+                        None,
+                    ):
+                        self.config["ai"]["provider"] = "openai"
+            except Exception:
+                pass
 
             db.close()
         except Exception:
@@ -166,7 +177,9 @@ class Config:
                 )
 
             default_provider = (self.config.get("ai") or {}).get("provider", "gemini")
-            for provider in ("gemini", "openai", "anthropic", "agentrouter"):
+            if default_provider in ("agentrouter", "agent_router"):
+                default_provider = "openai"
+            for provider in ("gemini", "openai", "anthropic"):
                 block = self.config.get(provider, {})
                 if block.get("api_key") or block.get("enabled"):
                     db.save_ai_provider(
@@ -223,56 +236,30 @@ class Config:
         if os.getenv("OPENAI_API_KEY"):
             self.config["openai"]["api_key"] = os.getenv("OPENAI_API_KEY")
             self.config["openai"]["enabled"] = True
+        openai_base = (os.getenv("OPENAI_BASE_URL") or os.getenv("OPENAI_API_BASE") or "").strip()
+        if openai_base and "agentrouter.org" not in openai_base.lower():
+            self.config["openai"]["base_url"] = openai_base
+        if os.getenv("OPENAI_MODEL"):
+            self.config["openai"]["model"] = os.getenv("OPENAI_MODEL")
 
         self.config.setdefault("anthropic", {})
         if os.getenv("ANTHROPIC_API_KEY"):
             self.config["anthropic"]["api_key"] = os.getenv("ANTHROPIC_API_KEY")
             self.config["anthropic"]["enabled"] = True
 
-        self.config.setdefault("agentrouter", {"base_url": "https://agentrouter.org/v1"})
-        ar_key = os.getenv("AGENTROUTER_API_KEY") or os.getenv("AGENT_ROUTER_TOKEN")
-        # Docs-style OpenAI env pointing at AgentRouter
-        openai_base = (os.getenv("OPENAI_BASE_URL") or os.getenv("OPENAI_API_BASE") or "").strip()
-        if not ar_key and openai_base and "agentrouter.org" in openai_base.lower():
-            ar_key = os.getenv("OPENAI_API_KEY")
-        if ar_key:
-            self.config["agentrouter"]["api_key"] = ar_key
-            self.config["agentrouter"]["enabled"] = True
-        if os.getenv("AGENTROUTER_BASE_URL"):
-            self.config["agentrouter"]["base_url"] = os.getenv("AGENTROUTER_BASE_URL")
-        elif openai_base and "agentrouter.org" in openai_base.lower():
-            self.config["agentrouter"]["base_url"] = openai_base
-        if os.getenv("AGENTROUTER_MODEL"):
-            self.config["agentrouter"]["model"] = os.getenv("AGENTROUTER_MODEL")
-        elif (
-            openai_base
-            and "agentrouter.org" in openai_base.lower()
-            and os.getenv("OPENAI_MODEL")
-        ):
-            self.config["agentrouter"]["model"] = os.getenv("OPENAI_MODEL")
-        # Always keep /v1 — bare https://agentrouter.org causes LangChain model_dump crashes.
-        try:
-            from .ai_provider import agentrouter_base_url
-
-            self.config["agentrouter"]["base_url"] = agentrouter_base_url(self.config)
-        except Exception:
-            raw = (self.config.get("agentrouter") or {}).get("base_url") or ""
-            raw = str(raw).strip().rstrip("/")
-            if raw and not raw.endswith("/v1"):
-                self.config["agentrouter"]["base_url"] = f"{raw}/v1"
+        # Drop any leftover AgentRouter config from file / old deploys
+        self.config.pop("agentrouter", None)
 
         self.config.setdefault("ai", {})
         # AI_PROVIDER only seeds when no provider was chosen yet (file/DB/dashboard).
         # Otherwise env permanently overrides dashboard switches (e.g. stuck on openai).
-        if os.getenv("AI_PROVIDER") and not (self.config.get("ai") or {}).get("provider"):
-            self.config["ai"]["provider"] = os.getenv("AI_PROVIDER")
-        elif (
-            not (self.config.get("ai") or {}).get("provider")
-            and openai_base
-            and "agentrouter.org" in openai_base.lower()
-            and ar_key
-        ):
-            self.config["ai"]["provider"] = "agentrouter"
+        env_provider = (os.getenv("AI_PROVIDER") or "").strip().lower()
+        if env_provider in ("agentrouter", "agent_router"):
+            env_provider = "openai"
+        if env_provider and not (self.config.get("ai") or {}).get("provider"):
+            self.config["ai"]["provider"] = env_provider
+        if (self.config.get("ai") or {}).get("provider") in ("agentrouter", "agent_router"):
+            self.config["ai"]["provider"] = "openai"
         if os.getenv("AI_PROMPT_PROFILE"):
             self.config["ai"]["prompt_profile"] = os.getenv("AI_PROMPT_PROFILE")
 
@@ -324,7 +311,6 @@ class Config:
             "temperature": ai.get("temperature", gemini.get("temperature", 0.7)),
             "openai": self.get("openai", {}),
             "anthropic": self.get("anthropic", {}),
-            "agentrouter": self.get("agentrouter", {}),
             "gemini": gemini,
         }
         return merged
