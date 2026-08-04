@@ -53,12 +53,19 @@ def agentrouter_api_key(config: Optional[Dict[str, Any]] = None) -> Optional[str
 
 
 def agentrouter_base_url(config: Optional[Dict[str, Any]] = None) -> str:
+    """Return AgentRouter OpenAI-compatible base URL (must end with /v1)."""
     config = config or {}
-    return (
+    url = (
         os.getenv("AGENTROUTER_BASE_URL")
         or (config.get("agentrouter") or {}).get("base_url")
         or AGENTROUTER_DEFAULT_BASE_URL
-    ).rstrip("/")
+    ).strip().rstrip("/")
+    # Missing /v1 makes langchain-openai treat the HTTP body as a raw str → model_dump crash.
+    if url.endswith("/v1/chat/completions"):
+        url = url[: -len("/chat/completions")]
+    if not url.endswith("/v1"):
+        url = f"{url}/v1"
+    return url
 
 
 class AIProvider(ABC):

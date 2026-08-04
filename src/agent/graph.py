@@ -67,12 +67,21 @@ def _chat_model():
             raise RuntimeError(
                 "AgentRouter selected but no AGENTROUTER_API_KEY / dashboard key set"
             )
-        return ChatOpenAI(
-            model=model_name,
-            api_key=api_key,
-            base_url=agentrouter_base_url(cfg_dict),
-            temperature=0.4,
-        )
+        base_url = agentrouter_base_url(cfg_dict)
+        # AgentRouter speaks Chat Completions only. gpt-5* names can make
+        # langchain-openai prefer Responses API and then crash with
+        # "'str' object has no attribute 'model_dump'".
+        kwargs: Dict[str, Any] = {
+            "model": model_name,
+            "api_key": api_key,
+            "base_url": base_url,
+            # gpt-5 family over chat completions: temperature must be 1
+            "temperature": 1 if model_name.startswith("gpt-5") else 0.4,
+        }
+        try:
+            return ChatOpenAI(**kwargs, use_responses_api=False)
+        except TypeError:
+            return ChatOpenAI(**kwargs)
 
     if provider == "openai":
         from langchain_openai import ChatOpenAI

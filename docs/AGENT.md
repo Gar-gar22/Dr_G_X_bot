@@ -95,6 +95,6 @@ When `AGENT_ENABLED=false`, classic photo+tip compose and batch MITL still work.
 | Issue | Fix |
 |-------|-----|
 | “AGENT_ENABLED is false” | Set env and redeploy |
-| Agent error about OpenAI / AgentRouter | Set `OPENAI_API_KEY` or `AGENTROUTER_API_KEY` + `AI_PROVIDER` |
+| Agent error `model_dump` / AgentRouter | Ensure base URL is `https://agentrouter.org/v1` (with `/v1`). Redeploy latest; Chat Completions is forced (Responses API disabled). |
 | No posts, only drafts | Action was risky — Approve in Telegram/Drafts |
 | Conflict getUpdates | Only one web service; see TELEGRAM_SETUP.md |

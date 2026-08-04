@@ -1498,7 +1498,11 @@ def settings_credentials():
         data.setdefault("agentrouter", {})
         ar_base = request.form.get("agentrouter_base_url", "").strip()
         if ar_base:
-            data["agentrouter"]["base_url"] = ar_base.rstrip("/")
+            from src.ai_provider import agentrouter_base_url
+
+            data["agentrouter"]["base_url"] = agentrouter_base_url(
+                {"agentrouter": {"base_url": ar_base}}
+            )
         from src.ai_provider import normalize_agentrouter_model
 
         data["agentrouter"]["model"] = normalize_agentrouter_model(
