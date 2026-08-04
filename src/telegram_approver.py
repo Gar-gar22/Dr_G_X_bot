@@ -349,9 +349,12 @@ class TelegramApprover:
             from psycopg2.extras import RealDictCursor
 
             database_url = (os.getenv("DATABASE_URL") or "").strip()
+            sslmode = (os.getenv("DB_SSLMODE") or "").strip().lower() or None
+            if sslmode == "required":
+                sslmode = "require"
             if database_url.startswith("postgres://"):
                 database_url = "postgresql://" + database_url[len("postgres://") :]
-            sslmode = (os.getenv("DB_SSLMODE") or "").strip() or None
+            database_url = database_url.replace("sslmode=required", "sslmode=require")
             if database_url:
                 if sslmode and "sslmode=" not in database_url.lower():
                     sep = "&" if "?" in database_url else "?"

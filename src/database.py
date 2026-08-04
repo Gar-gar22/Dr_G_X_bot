@@ -12,6 +12,36 @@ load_dotenv()
 
 logger = logging.getLogger(__name__)
 
+# libpq accepts: disable, allow, prefer, require, verify-ca, verify-full
+# People often typo "required" on Render — normalize common aliases.
+_SSLMODE_ALIASES = {
+    "required": "require",
+    "req": "require",
+    "verified": "verify-full",
+}
+
+
+def _normalize_sslmode(value: Optional[str]) -> Optional[str]:
+    if not value:
+        return None
+    mode = value.strip().lower()
+    if not mode:
+        return None
+    return _SSLMODE_ALIASES.get(mode, mode)
+
+
+def _normalize_database_url(url: str, sslmode: Optional[str] = None) -> str:
+    """Fix postgres:// scheme and invalid sslmode=required in URLs."""
+    if url.startswith("postgres://"):
+        url = "postgresql://" + url[len("postgres://") :]
+    # Fix typo embedded in connection string
+    url = url.replace("sslmode=required", "sslmode=require")
+    url = url.replace("sslmode=Required", "sslmode=require")
+    if sslmode and "sslmode=" not in url.lower():
+        sep = "&" if "?" in url else "?"
+        url = f"{url}{sep}sslmode={sslmode}"
+    return url
+
 
 class Database:
     """Manages PostgreSQL database for tracking replied tweets."""
@@ -36,8 +66,14 @@ class Database:
         db_password = password if password is not None else os.getenv("DB_PASSWORD", "")
         self.password = db_password if db_password else ""
         self.database = database or os.getenv("DB_NAME", "twitter")
-        self.sslmode = os.getenv("DB_SSLMODE", "").strip() or None
-
+        self.sslmode = _normalize_sslmode(os.getenv("DB_SSLMODE", ""))
+        if self.database_url:
+            self.database_url = _normalize_database_url(self.database_url, None)
+            # Apply sslmode to URL only if not already present
+            if self.sslmode and "sslmode=" not in self.database_url.lower():
+                self.database_url = _normalize_database_url(
+                    self.database_url, self.sslmode
+                )
         max_retries = 3
         retry_delay = 2
 
@@ -76,10 +112,9 @@ class Database:
     def _connect_kwargs(self, dbname: Optional[str] = None) -> dict:
         """Build psycopg2.connect kwargs from DATABASE_URL or discrete env vars."""
         if self.database_url:
-            dsn = self.database_url
+            dsn = _normalize_database_url(self.database_url, None)
             if self.sslmode and "sslmode=" not in dsn.lower():
-                sep = "&" if "?" in dsn else "?"
-                dsn = f"{dsn}{sep}sslmode={self.sslmode}"
+                dsn = _normalize_database_url(dsn, self.sslmode)
             return {
                 "dsn": dsn,
                 "cursor_factory": RealDictCursor,
