@@ -141,7 +141,7 @@ def _extract_profile_keywords(texts: List[str], max_keywords: int = 50) -> List[
 
 
 def get_db_connection():
-    """Get MySQL database connection using Database class."""
+    """Get PostgreSQL database connection using Database class."""
     global db_instance
     if db_instance is None:
         try:
@@ -789,7 +789,7 @@ LANDING_PAGE_TEMPLATE = """
             &copy; 2024 Auto-Reply X Bot. Built for automated Twitter engagement.
           </p>
           <p class="text-muted mb-0 mt-2" style="color: #94a3b8 !important;">
-            A project by <a href="https://x.com/ohakwengr" target="_blank" rel="noopener noreferrer" class="text-decoration-none" style="color: #6366f1 !important;">Ogbonna Ohakwe</a>
+            A project by <a href="https://x.com/ohakwengr" target="_blank" rel="noopener noreferrer" class="text-decoration-none" style="color: #6366f1 !important;">Abdul IB</a>
           </p>
         </div>
       </div>
@@ -1826,7 +1826,7 @@ def dashboard_overview():
                 "FROM replied_tweets ORDER BY replied_at DESC LIMIT 10"
             )
             rows = cur.fetchall()
-            # PyMySQL with DictCursor already returns dicts
+            # RealDictCursor already returns dict-like rows
             recent_replies = []
             for row in rows:
                 from datetime import datetime

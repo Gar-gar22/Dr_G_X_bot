@@ -1,10 +1,11 @@
-"""Database management for tracking replied tweets using MySQL."""
-import pymysql
+"""Database management for tracking replied tweets using PostgreSQL."""
 import logging
 import os
 import time
 from typing import Set, Optional, List, Dict, Any
 from datetime import datetime
+import psycopg2
+from psycopg2.extras import RealDictCursor
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -13,150 +14,202 @@ logger = logging.getLogger(__name__)
 
 
 class Database:
-    """Manages MySQL database for tracking replied tweets."""
-    
-    def __init__(self, 
-                 host: str = None,
-                 port: int = None,
-                 user: str = None,
-                 password: str = None,
-                 database: str = None):
+    """Manages PostgreSQL database for tracking replied tweets."""
+
+    def __init__(
+        self,
+        host: str = None,
+        port: int = None,
+        user: str = None,
+        password: str = None,
+        database: str = None,
+    ):
         """Initialize database connection and create tables if needed."""
-        # Get database config from environment or use defaults
+        self.database_url = os.getenv("DATABASE_URL", "").strip() or None
+        # Render / Heroku often use postgres:// — normalize for psycopg2
+        if self.database_url and self.database_url.startswith("postgres://"):
+            self.database_url = "postgresql://" + self.database_url[len("postgres://") :]
+
         self.host = host or os.getenv("DB_HOST", "localhost")
-        self.port = port or int(os.getenv("DB_PORT", "3306"))
-        self.user = user or os.getenv("DB_USER", "root")
-        # Handle empty password (common for local MySQL/XAMPP)
-        db_password = password or os.getenv("DB_PASSWORD", "")
+        self.port = port or int(os.getenv("DB_PORT", "5432"))
+        self.user = user or os.getenv("DB_USER", "postgres")
+        db_password = password if password is not None else os.getenv("DB_PASSWORD", "")
         self.password = db_password if db_password else ""
         self.database = database or os.getenv("DB_NAME", "twitter")
-        
-        # Connect to MySQL server with retry logic
+        self.sslmode = os.getenv("DB_SSLMODE", "").strip() or None
+
         max_retries = 3
-        retry_delay = 2  # seconds
-        
+        retry_delay = 2
+
         for attempt in range(max_retries):
             try:
-                # Connect to MySQL server (without database first)
-                self.conn = pymysql.connect(
-                    host=self.host,
-                    port=self.port,
-                    user=self.user,
-                    password=self.password,
-                    charset='utf8mb4',
-                    cursorclass=pymysql.cursors.DictCursor,
-                    connect_timeout=10
-                )
-                self._ensure_database_exists()
-                self.conn.close()
-                
-                # Connect to the specific database
-                self.conn = pymysql.connect(
-                    host=self.host,
-                    port=self.port,
-                    user=self.user,
-                    password=self.password,
-                    database=self.database,
-                    charset='utf8mb4',
-                    cursorclass=pymysql.cursors.DictCursor,
-                    autocommit=False,
-                    connect_timeout=10
-                )
+                if not self.database_url:
+                    self._ensure_database_exists()
+                self.conn = self._open_connection(self.database)
+                self.conn.autocommit = False
                 self.create_tables()
-                logger.info(f"Connected to MySQL database '{self.database}' on {self.host}:{self.port}")
-                break
-                
-            except pymysql.OperationalError as e:
-                if attempt < max_retries - 1:
-                    logger.warning(f"Connection attempt {attempt + 1} failed: {e}. Retrying in {retry_delay} seconds...")
-                    time.sleep(retry_delay)
-                    retry_delay *= 2  # Exponential backoff
+                if self.database_url:
+                    logger.info("Connected to PostgreSQL via DATABASE_URL")
                 else:
-                    logger.error(f"Failed to connect to MySQL database after {max_retries} attempts: {e}")
+                    logger.info(
+                        f"Connected to PostgreSQL database '{self.database}' "
+                        f"on {self.host}:{self.port}"
+                    )
+                break
+            except psycopg2.OperationalError as e:
+                if attempt < max_retries - 1:
+                    logger.warning(
+                        f"Connection attempt {attempt + 1} failed: {e}. "
+                        f"Retrying in {retry_delay} seconds..."
+                    )
+                    time.sleep(retry_delay)
+                    retry_delay *= 2
+                else:
+                    logger.error(
+                        f"Failed to connect to PostgreSQL after {max_retries} attempts: {e}"
+                    )
                     raise
             except Exception as e:
-                logger.error(f"Error connecting to MySQL database: {e}")
+                logger.error(f"Error connecting to PostgreSQL database: {e}")
                 raise
-    
+
+    def _connect_kwargs(self, dbname: Optional[str] = None) -> dict:
+        """Build psycopg2.connect kwargs from DATABASE_URL or discrete env vars."""
+        if self.database_url:
+            dsn = self.database_url
+            if self.sslmode and "sslmode=" not in dsn.lower():
+                sep = "&" if "?" in dsn else "?"
+                dsn = f"{dsn}{sep}sslmode={self.sslmode}"
+            return {
+                "dsn": dsn,
+                "cursor_factory": RealDictCursor,
+                "connect_timeout": 10,
+            }
+
+        kwargs = {
+            "host": self.host,
+            "port": self.port,
+            "user": self.user,
+            "password": self.password,
+            "dbname": dbname or self.database,
+            "cursor_factory": RealDictCursor,
+            "connect_timeout": 10,
+        }
+        if self.sslmode:
+            kwargs["sslmode"] = self.sslmode
+        return kwargs
+
+    def _open_connection(self, dbname: Optional[str] = None):
+        return psycopg2.connect(**self._connect_kwargs(dbname))
+
     def _ensure_database_exists(self) -> None:
-        """Ensure the database exists, create if it doesn't."""
-        cursor = self.conn.cursor()
+        """Create the application database locally if it does not exist."""
+        # Connect to the default maintenance DB
+        admin = psycopg2.connect(**self._connect_kwargs("postgres"))
+        admin.autocommit = True
+        cursor = admin.cursor()
         try:
-            cursor.execute(f"CREATE DATABASE IF NOT EXISTS `{self.database}` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci")
-            self.conn.commit()
-            logger.info(f"Database '{self.database}' ensured to exist")
-        except Exception as e:
-            logger.error(f"Error creating database: {e}")
-            raise
+            cursor.execute(
+                "SELECT 1 FROM pg_database WHERE datname = %s", (self.database,)
+            )
+            if cursor.fetchone() is None:
+                # Identifiers cannot be parameterized; sanitize to [a-zA-Z0-9_]
+                safe_name = "".join(c for c in self.database if c.isalnum() or c == "_")
+                if not safe_name:
+                    raise ValueError(f"Invalid database name: {self.database}")
+                cursor.execute(f'CREATE DATABASE "{safe_name}"')
+                logger.info(f"Created PostgreSQL database '{safe_name}'")
+            else:
+                logger.info(f"Database '{self.database}' already exists")
         finally:
             cursor.close()
-    
+            admin.close()
+
     def create_tables(self) -> None:
         """Create necessary tables if they don't exist."""
         cursor = self.conn.cursor()
         try:
-            # Create replied_tweets table
-            cursor.execute("""
+            cursor.execute(
+                """
                 CREATE TABLE IF NOT EXISTS replied_tweets (
                     tweet_id VARCHAR(50) PRIMARY KEY,
                     reply_tweet_id VARCHAR(50),
                     replied_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                     source VARCHAR(50),
-                    keyword VARCHAR(255),
-                    INDEX idx_replied_at (replied_at)
-                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
-            """)
-            
-            # Create posted_tweets table
-            cursor.execute("""
+                    keyword VARCHAR(255)
+                )
+                """
+            )
+            cursor.execute(
+                "CREATE INDEX IF NOT EXISTS idx_replied_at ON replied_tweets (replied_at)"
+            )
+
+            cursor.execute(
+                """
                 CREATE TABLE IF NOT EXISTS posted_tweets (
                     tweet_id VARCHAR(50) PRIMARY KEY,
                     text TEXT,
-                    posted_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                    INDEX idx_posted_at (posted_at)
-                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
-            """)
-            
-            # Create posted_threads table
-            cursor.execute("""
+                    posted_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+                """
+            )
+            cursor.execute(
+                "CREATE INDEX IF NOT EXISTS idx_posted_tweets_at ON posted_tweets (posted_at)"
+            )
+
+            cursor.execute(
+                """
                 CREATE TABLE IF NOT EXISTS posted_threads (
                     thread_id VARCHAR(50) PRIMARY KEY,
                     first_tweet_id VARCHAR(50),
                     tweet_ids TEXT,
                     texts TEXT,
-                    posted_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                    INDEX idx_posted_at (posted_at)
-                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
-            """)
-            
-            # Create quote_retweets table
-            cursor.execute("""
+                    posted_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+                """
+            )
+            cursor.execute(
+                "CREATE INDEX IF NOT EXISTS idx_posted_threads_at ON posted_threads (posted_at)"
+            )
+
+            cursor.execute(
+                """
                 CREATE TABLE IF NOT EXISTS quote_retweets (
                     quote_tweet_id VARCHAR(50) PRIMARY KEY,
                     original_tweet_id VARCHAR(50),
                     text TEXT,
-                    posted_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                    INDEX idx_posted_at (posted_at),
-                    INDEX idx_original_tweet (original_tweet_id)
-                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
-            """)
-            
-            # Create bot_logs table
-            cursor.execute("""
+                    posted_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+                """
+            )
+            cursor.execute(
+                "CREATE INDEX IF NOT EXISTS idx_quote_posted_at ON quote_retweets (posted_at)"
+            )
+            cursor.execute(
+                "CREATE INDEX IF NOT EXISTS idx_original_tweet ON quote_retweets (original_tweet_id)"
+            )
+
+            cursor.execute(
+                """
                 CREATE TABLE IF NOT EXISTS bot_logs (
-                    id INT AUTO_INCREMENT PRIMARY KEY,
+                    id SERIAL PRIMARY KEY,
                     log_level VARCHAR(20),
                     message TEXT,
-                    timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                    INDEX idx_timestamp (timestamp),
-                    INDEX idx_log_level (log_level)
-                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
-            """)
-            
-            # Create api_credentials table
-            cursor.execute("""
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+                """
+            )
+            cursor.execute(
+                "CREATE INDEX IF NOT EXISTS idx_bot_logs_created ON bot_logs (created_at)"
+            )
+            cursor.execute(
+                "CREATE INDEX IF NOT EXISTS idx_bot_logs_level ON bot_logs (log_level)"
+            )
+
+            cursor.execute(
+                """
                 CREATE TABLE IF NOT EXISTS api_credentials (
-                    id INT AUTO_INCREMENT PRIMARY KEY,
+                    id SERIAL PRIMARY KEY,
                     service_name VARCHAR(50) UNIQUE NOT NULL,
                     consumer_key VARCHAR(255),
                     consumer_secret VARCHAR(255),
@@ -165,15 +218,19 @@ class Database:
                     bearer_token VARCHAR(255),
                     api_key VARCHAR(255),
                     enabled BOOLEAN DEFAULT TRUE,
-                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                    INDEX idx_service_name (service_name)
-                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
-            """)
+                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+                """
+            )
+            cursor.execute(
+                "CREATE INDEX IF NOT EXISTS idx_service_name ON api_credentials (service_name)"
+            )
 
-            cursor.execute("""
+            cursor.execute(
+                """
                 CREATE TABLE IF NOT EXISTS content_drafts (
-                    id INT AUTO_INCREMENT PRIMARY KEY,
+                    id SERIAL PRIMARY KEY,
                     kind VARCHAR(20) NOT NULL,
                     status VARCHAR(20) NOT NULL DEFAULT 'pending',
                     target_tweet_id VARCHAR(50),
@@ -191,78 +248,107 @@ class Database:
                     error TEXT,
                     posted_tweet_id VARCHAR(50),
                     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                    resolved_at TIMESTAMP NULL,
-                    INDEX idx_draft_status (status),
-                    INDEX idx_draft_created (created_at),
-                    INDEX idx_draft_kind (kind)
-                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
-            """)
+                    resolved_at TIMESTAMP NULL
+                )
+                """
+            )
+            cursor.execute(
+                "CREATE INDEX IF NOT EXISTS idx_draft_status ON content_drafts (status)"
+            )
+            cursor.execute(
+                "CREATE INDEX IF NOT EXISTS idx_draft_created ON content_drafts (created_at)"
+            )
+            cursor.execute(
+                "CREATE INDEX IF NOT EXISTS idx_draft_kind ON content_drafts (kind)"
+            )
 
-            cursor.execute("""
+            cursor.execute(
+                """
                 CREATE TABLE IF NOT EXISTS ai_prompt_profiles (
-                    id INT AUTO_INCREMENT PRIMARY KEY,
+                    id SERIAL PRIMARY KEY,
                     name VARCHAR(100) NOT NULL,
                     content_type VARCHAR(20) NOT NULL DEFAULT 'reply',
                     system_instruction TEXT NOT NULL,
                     user_prompt_template TEXT,
                     is_active BOOLEAN DEFAULT TRUE,
-                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                    UNIQUE KEY uq_profile_name_type (name, content_type),
-                    INDEX idx_profile_active (is_active)
-                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
-            """)
+                    CONSTRAINT uq_profile_name_type UNIQUE (name, content_type)
+                )
+                """
+            )
+            cursor.execute(
+                "CREATE INDEX IF NOT EXISTS idx_profile_active ON ai_prompt_profiles (is_active)"
+            )
 
-            cursor.execute("""
+            cursor.execute(
+                """
                 CREATE TABLE IF NOT EXISTS ai_provider_settings (
-                    id INT AUTO_INCREMENT PRIMARY KEY,
+                    id SERIAL PRIMARY KEY,
                     provider VARCHAR(50) UNIQUE NOT NULL,
                     api_key VARCHAR(512),
                     model VARCHAR(100),
                     enabled BOOLEAN DEFAULT FALSE,
                     is_default BOOLEAN DEFAULT FALSE,
-                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
-            """)
+                )
+                """
+            )
 
-            cursor.execute("""
+            cursor.execute(
+                """
                 CREATE TABLE IF NOT EXISTS media_assets (
-                    id INT AUTO_INCREMENT PRIMARY KEY,
+                    id SERIAL PRIMARY KEY,
                     filename VARCHAR(255) NOT NULL,
                     original_name VARCHAR(255),
                     mime_type VARCHAR(100),
                     file_path VARCHAR(512) NOT NULL,
                     file_size INT DEFAULT 0,
-                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                    INDEX idx_media_created (created_at)
-                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
-            """)
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+                """
+            )
+            cursor.execute(
+                "CREATE INDEX IF NOT EXISTS idx_media_created ON media_assets (created_at)"
+            )
 
-            cursor.execute("""
+            cursor.execute(
+                """
                 CREATE TABLE IF NOT EXISTS draft_media (
-                    id INT AUTO_INCREMENT PRIMARY KEY,
+                    id SERIAL PRIMARY KEY,
                     draft_id INT NOT NULL,
                     media_id INT NOT NULL,
                     sort_order INT DEFAULT 0,
-                    UNIQUE KEY uq_draft_media (draft_id, media_id),
-                    INDEX idx_draft_media_draft (draft_id),
-                    INDEX idx_draft_media_media (media_id)
-                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
-            """)
+                    CONSTRAINT uq_draft_media UNIQUE (draft_id, media_id)
+                )
+                """
+            )
+            cursor.execute(
+                "CREATE INDEX IF NOT EXISTS idx_draft_media_draft ON draft_media (draft_id)"
+            )
+            cursor.execute(
+                "CREATE INDEX IF NOT EXISTS idx_draft_media_media ON draft_media (media_id)"
+            )
 
-            cursor.execute("""
+            cursor.execute(
+                """
                 CREATE TABLE IF NOT EXISTS safety_events (
-                    id INT AUTO_INCREMENT PRIMARY KEY,
+                    id SERIAL PRIMARY KEY,
                     event_type VARCHAR(50) NOT NULL,
                     message TEXT,
                     meta_json TEXT,
-                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                    INDEX idx_safety_created (created_at),
-                    INDEX idx_safety_type (event_type)
-                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
-            """)
-            
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+                """
+            )
+            cursor.execute(
+                "CREATE INDEX IF NOT EXISTS idx_safety_created ON safety_events (created_at)"
+            )
+            cursor.execute(
+                "CREATE INDEX IF NOT EXISTS idx_safety_type ON safety_events (event_type)"
+            )
+
             self.conn.commit()
             self._seed_ai_defaults(cursor)
             self.conn.commit()
@@ -369,12 +455,11 @@ class Database:
                 )
     
     def _row_to_dict(self, row: Dict[str, Any]) -> Dict[str, Any]:
-        """Convert MySQL row (already dict) to standard dict."""
+        """Convert RealDictRow to a plain dict."""
         if row is None:
             return None
-        # PyMySQL with DictCursor already returns dicts
-        return row
-    
+        return dict(row)
+
     def is_tweet_replied(self, tweet_id: str) -> bool:
         """Check if a tweet has already been replied to."""
         cursor = self.conn.cursor()
@@ -392,10 +477,10 @@ class Database:
             cursor.execute("""
                 INSERT INTO replied_tweets (tweet_id, reply_tweet_id, source, keyword)
                 VALUES (%s, %s, %s, %s)
-                ON DUPLICATE KEY UPDATE
-                    reply_tweet_id = VALUES(reply_tweet_id),
-                    source = VALUES(source),
-                    keyword = VALUES(keyword),
+                ON CONFLICT (tweet_id) DO UPDATE SET
+                    reply_tweet_id = EXCLUDED.reply_tweet_id,
+                    source = EXCLUDED.source,
+                    keyword = EXCLUDED.keyword,
                     replied_at = CURRENT_TIMESTAMP
             """, (tweet_id, reply_tweet_id, source, keyword))
             self.conn.commit()
@@ -424,8 +509,8 @@ class Database:
             cursor.execute("""
                 INSERT INTO posted_tweets (tweet_id, text)
                 VALUES (%s, %s)
-                ON DUPLICATE KEY UPDATE
-                    text = VALUES(text),
+                ON CONFLICT (tweet_id) DO UPDATE SET
+                    text = EXCLUDED.text,
                     posted_at = CURRENT_TIMESTAMP
             """, (tweet_id, text))
             self.conn.commit()
@@ -450,10 +535,10 @@ class Database:
             cursor.execute("""
                 INSERT INTO posted_threads (thread_id, first_tweet_id, tweet_ids, texts)
                 VALUES (%s, %s, %s, %s)
-                ON DUPLICATE KEY UPDATE
-                    first_tweet_id = VALUES(first_tweet_id),
-                    tweet_ids = VALUES(tweet_ids),
-                    texts = VALUES(texts),
+                ON CONFLICT (thread_id) DO UPDATE SET
+                    first_tweet_id = EXCLUDED.first_tweet_id,
+                    tweet_ids = EXCLUDED.tweet_ids,
+                    texts = EXCLUDED.texts,
                     posted_at = CURRENT_TIMESTAMP
             """, (thread_id, first_tweet_id, tweet_ids_json, texts_json))
             self.conn.commit()
@@ -472,9 +557,9 @@ class Database:
             cursor.execute("""
                 INSERT INTO quote_retweets (quote_tweet_id, original_tweet_id, text)
                 VALUES (%s, %s, %s)
-                ON DUPLICATE KEY UPDATE
-                    original_tweet_id = VALUES(original_tweet_id),
-                    text = VALUES(text),
+                ON CONFLICT (quote_tweet_id) DO UPDATE SET
+                    original_tweet_id = EXCLUDED.original_tweet_id,
+                    text = EXCLUDED.text,
                     posted_at = CURRENT_TIMESTAMP
             """, (quote_tweet_id, original_tweet_id, text))
             self.conn.commit()
@@ -512,14 +597,14 @@ class Database:
                     api_key, enabled
                 )
                 VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
-                ON DUPLICATE KEY UPDATE
-                    consumer_key = VALUES(consumer_key),
-                    consumer_secret = VALUES(consumer_secret),
-                    access_token = VALUES(access_token),
-                    access_token_secret = VALUES(access_token_secret),
-                    bearer_token = VALUES(bearer_token),
-                    api_key = VALUES(api_key),
-                    enabled = VALUES(enabled),
+                ON CONFLICT (service_name) DO UPDATE SET
+                    consumer_key = EXCLUDED.consumer_key,
+                    consumer_secret = EXCLUDED.consumer_secret,
+                    access_token = EXCLUDED.access_token,
+                    access_token_secret = EXCLUDED.access_token_secret,
+                    bearer_token = EXCLUDED.bearer_token,
+                    api_key = EXCLUDED.api_key,
+                    enabled = EXCLUDED.enabled,
                     updated_at = CURRENT_TIMESTAMP
             """, (
                 service_name,
@@ -614,6 +699,7 @@ class Database:
                 ) VALUES (
                     %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s
                 )
+                RETURNING id
                 """,
                 (
                     data.get("kind"),
@@ -632,8 +718,9 @@ class Database:
                     data.get("telegram_message_id"),
                 ),
             )
+            row = cursor.fetchone()
             self.conn.commit()
-            draft_id = cursor.lastrowid
+            draft_id = int(row["id"]) if row else 0
             logger.info(f"Created draft {draft_id} kind={data.get('kind')}")
             return draft_id
         except Exception as e:
@@ -820,7 +907,8 @@ class Database:
                         content_type = %s,
                         system_instruction = %s,
                         user_prompt_template = %s,
-                        is_active = %s
+                        is_active = %s,
+                        updated_at = CURRENT_TIMESTAMP
                     WHERE id = %s
                     """,
                     (
@@ -839,10 +927,12 @@ class Database:
                 INSERT INTO ai_prompt_profiles
                     (name, content_type, system_instruction, user_prompt_template, is_active)
                 VALUES (%s, %s, %s, %s, %s)
-                ON DUPLICATE KEY UPDATE
-                    system_instruction = VALUES(system_instruction),
-                    user_prompt_template = VALUES(user_prompt_template),
-                    is_active = VALUES(is_active)
+                ON CONFLICT (name, content_type) DO UPDATE SET
+                    system_instruction = EXCLUDED.system_instruction,
+                    user_prompt_template = EXCLUDED.user_prompt_template,
+                    is_active = EXCLUDED.is_active,
+                    updated_at = CURRENT_TIMESTAMP
+                RETURNING id
                 """,
                 (
                     data.get("name"),
@@ -852,18 +942,8 @@ class Database:
                     data.get("is_active", True),
                 ),
             )
-            self.conn.commit()
-            if cursor.lastrowid:
-                return int(cursor.lastrowid)
-            # ON DUPLICATE may not set lastrowid; fetch id
-            cursor.execute(
-                """
-                SELECT id FROM ai_prompt_profiles
-                WHERE name = %s AND content_type = %s
-                """,
-                (data.get("name"), data.get("content_type", "reply")),
-            )
             row = cursor.fetchone()
+            self.conn.commit()
             return int(row["id"]) if row else 0
         except Exception as e:
             self.conn.rollback()
@@ -961,7 +1041,8 @@ class Database:
                         api_key = %s,
                         model = %s,
                         enabled = %s,
-                        is_default = %s
+                        is_default = %s,
+                        updated_at = CURRENT_TIMESTAMP
                     WHERE provider = %s
                     """,
                     (
@@ -1076,11 +1157,13 @@ class Database:
                 INSERT INTO media_assets
                     (filename, original_name, mime_type, file_path, file_size)
                 VALUES (%s, %s, %s, %s, %s)
+                RETURNING id
                 """,
                 (filename, original_name, mime_type, file_path, file_size),
             )
+            row = cursor.fetchone()
             self.conn.commit()
-            return int(cursor.lastrowid)
+            return int(row["id"]) if row else 0
         except Exception as e:
             self.conn.rollback()
             logger.error(f"Error creating media asset: {e}", exc_info=True)

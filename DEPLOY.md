@@ -31,10 +31,11 @@ ADMIN_EMAIL=you@example.com
 ADMIN_PASSWORD=strong-password-here
 
 DB_HOST=localhost
-DB_PORT=3306
+DB_PORT=5432
 DB_USER=your_db_user
 DB_PASSWORD=your_db_password
 DB_NAME=twitter
+# Or on Render: DATABASE_URL=postgresql://...
 
 # Telegram man-in-the-loop (draft approve/edit/reject)
 TELEGRAM_BOT_TOKEN=
@@ -111,7 +112,7 @@ Create `/etc/systemd/system/tweetpy.service`:
 ```ini
 [Unit]
 Description=X Bot Dashboard (Gunicorn)
-After=network.target mysql.service
+After=network.target postgresql.service
 
 [Service]
 User=www-data

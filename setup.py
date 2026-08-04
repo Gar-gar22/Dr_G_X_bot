@@ -178,7 +178,7 @@ def setup_config():
     print(f"\nConfiguration saved to {config_path.absolute()}")
     print("\nAlso create a .env from env.example with:")
     print("  ADMIN_EMAIL / ADMIN_PASSWORD")
-    print("  DB_* MySQL settings")
+    print("  DB_* / DATABASE_URL PostgreSQL settings")
     print("  TELEGRAM_BOT_TOKEN / TELEGRAM_CHAT_ID (for MITL)")
     print("  AI provider API keys")
     print("\nNext steps:")

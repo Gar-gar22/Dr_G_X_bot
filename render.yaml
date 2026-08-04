@@ -1,39 +1,24 @@
 services:
   - type: web
     name: tweetpy-bot
-    env: python
+    runtime: python
     buildCommand: pip install -r requirements.txt
-    startCommand: python dashboard.py
+    startCommand: gunicorn -w 1 -b 0.0.0.0:$PORT --timeout 120 dashboard:app
     envVars:
       - key: FLASK_SECRET_KEY
         generateValue: true
-      - key: PORT
-        value: 5000
       - key: FLASK_DEBUG
-        value: false
-      - key: DB_HOST
+        value: "false"
+      - key: DATABASE_URL
         fromDatabase:
           name: tweetpy-db
-          property: host
-      - key: DB_PORT
-        fromDatabase:
-          name: tweetpy-db
-          property: port
-      - key: DB_USER
-        fromDatabase:
-          name: tweetpy-db
-          property: user
-      - key: DB_PASSWORD
-        fromDatabase:
-          name: tweetpy-db
-          property: password
-      - key: DB_NAME
-        fromDatabase:
-          name: tweetpy-db
-          property: database
+          property: connectionString
+      - key: DB_SSLMODE
+        value: require
 
 databases:
   - name: tweetpy-db
     databaseName: twitter
     user: tweetpy
+    plan: free
 

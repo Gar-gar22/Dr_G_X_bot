@@ -10,12 +10,12 @@ Automated X/Twitter engagement bot with **Telegram man-in-the-loop**, multi-prov
 - **Niche system prompts**: Admin-editable profiles (e.g. `web3`, `blockchain`, `default`)
 - **Original tweets & threads**: Generated on schedule (also go through MITL when enabled)
 - **Admin dashboard**: Password login, draft queue, full records, credentials, AI settings, **media library**
-- **MySQL state**: Tracks replies, tweets, quotes, drafts, AI settings, media attachments
+- **PostgreSQL state**: Tracks replies, tweets, quotes, drafts, AI settings, media attachments
 
 ## Prerequisites
 
 - Python 3.8+
-- MySQL
+- PostgreSQL
 - X Developer App (Read + Write)
 - At least one AI API key (optional but recommended)
 - Telegram bot token + your chat id (for MITL notifications)
@@ -45,8 +45,8 @@ python main.py              # in-process morning/evening scheduler
 |--------|------|
 | `.env` | Secrets, admin login, Telegram, DB, AI keys |
 | `config.json` | Keywords, schedule, filters, MITL flag, reply templates |
-| MySQL `ai_prompt_profiles` | Niche system instructions |
-| MySQL `ai_provider_settings` | Provider models / default |
+| PostgreSQL `ai_prompt_profiles` | Niche system instructions |
+| PostgreSQL `ai_provider_settings` | Provider models / default |
 
 ### Important env vars
 
@@ -62,7 +62,7 @@ See [`env.example`](env.example).
 ## How MITL works
 
 1. Bot collects & generates content
-2. Saves a **pending draft** in MySQL and notifies Telegram
+2. Saves a **pending draft** in PostgreSQL and notifies Telegram
 3. You **Approve** (posts to X), **Edit** then approve, or **Reject**
 4. Dashboard **Drafts** page does the same without Telegram
 
