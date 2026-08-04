@@ -190,6 +190,19 @@ class DraftPoster:
                     "error": None,
                 },
             )
+            try:
+                from .agent import memory as agent_memory
+
+                action = agent_memory.get_action_by_draft(self.db, draft_id)
+                if action:
+                    agent_memory.update_action(
+                        self.db,
+                        int(action["id"]),
+                        status="executed",
+                        result=str(posted_id),
+                    )
+            except Exception as ae:
+                logger.warning(f"agent_action update skipped: {ae}")
             return {"ok": True, "posted_tweet_id": str(posted_id)}
         except Exception as e:
             logger.error(f"Failed to approve draft {draft_id}: {e}", exc_info=True)
@@ -214,6 +227,16 @@ class DraftPoster:
             draft_id,
             {"status": "rejected", "resolved_at": datetime.now()},
         )
+        try:
+            from .agent import memory as agent_memory
+
+            action = agent_memory.get_action_by_draft(self.db, draft_id)
+            if action:
+                agent_memory.update_action(
+                    self.db, int(action["id"]), status="rejected", result="user_rejected"
+                )
+        except Exception:
+            pass
         return {"ok": True}
 
     def save_edit(self, draft_id: int, text: str) -> Dict[str, Any]:
@@ -812,14 +835,15 @@ class TelegramApprover:
                 app.add_error_handler(_on_error)
 
                 HELP = (
-                    "X Bot compose (MITL)\n\n"
-                    "• Photo + caption tip → AI full post + Approve buttons\n"
-                    "• Photo album (up to 4) + tip on first/last caption\n"
-                    "• Photo then tip as next message\n"
-                    "• /rewrite [guidance] — AI rewrite last compose draft\n"
-                    "• /rewrite 123 [guidance] — rewrite draft #123\n"
-                    "Buttons: Approve · Edit · Rewrite · Reject\n"
-                    "Dashboard Drafts works the same."
+                    "X Agent + MITL\n\n"
+                    "Agent mode (AGENT_ENABLED=true):\n"
+                    "• Chat naturally — search X, draft, reply, tweet via tools\n"
+                    "• Risky posts need Approve buttons\n"
+                    "• /status — budgets & recent actions\n\n"
+                    "Classic compose:\n"
+                    "• Photo + caption tip → draft + Approve\n"
+                    "• /rewrite [guidance] · /rewrite 123 [guidance]\n"
+                    "Buttons: Approve · Edit · Rewrite · Reject"
                 )
 
                 async def on_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -828,6 +852,33 @@ class TelegramApprover:
                     ):
                         return
                     await update.message.reply_text(HELP)
+
+                async def on_status(update: Update, context: ContextTypes.DEFAULT_TYPE):
+                    if not update.effective_chat or not self._authorized_chat(
+                        update.effective_chat.id
+                    ):
+                        return
+                    try:
+                        from .agent import get_agent_status
+
+                        st = await asyncio.get_event_loop().run_in_executor(
+                            None, get_agent_status
+                        )
+                        lines = [
+                            f"Agent enabled: {st.get('enabled')}",
+                            f"Dry run: {st.get('dry_run')}",
+                            f"Max tool steps: {st.get('max_tool_steps')}",
+                            f"Posts today: {st.get('posts_today')} / {st.get('daily_limit')}",
+                            "Recent actions:",
+                        ]
+                        for a in st.get("recent_actions") or []:
+                            lines.append(
+                                f"• #{a.get('id')} {a.get('tool')} "
+                                f"[{a.get('risk')}] {a.get('status')}"
+                            )
+                        await update.message.reply_text("\n".join(lines)[:4000])
+                    except Exception as e:
+                        await update.message.reply_text(f"Status error: {e}")
 
                 async def on_rewrite_cmd(
                     update: Update, context: ContextTypes.DEFAULT_TYPE
@@ -1013,6 +1064,36 @@ class TelegramApprover:
 
                     # Single photo
                     if tip:
+                        try:
+                            from .agent import agent_enabled, run_agent_turn
+
+                            if agent_enabled():
+                                await update.message.reply_text(
+                                    "Got image + tip — running agent…"
+                                )
+                                chat_id = str(update.effective_chat.id)
+                                prompt = (
+                                    f"{tip}\n\n"
+                                    "(User attached an image; draft/post a caption. "
+                                    "If posting requires approval, queue Approve.)"
+                                )
+                                result = await asyncio.get_event_loop().run_in_executor(
+                                    None,
+                                    lambda: run_agent_turn(
+                                        chat_id, prompt, telegram=self
+                                    ),
+                                )
+                                await update.message.reply_text(
+                                    (
+                                        result.get("reply")
+                                        or result.get("error")
+                                        or "Done"
+                                    )[:4000]
+                                )
+                                return
+                        except Exception as e:
+                            logger.warning(f"Agent photo path failed, compose fallback: {e}")
+
                         await update.message.reply_text("Got it — writing the post…")
                         result = await asyncio.get_event_loop().run_in_executor(
                             None,
@@ -1071,28 +1152,56 @@ class TelegramApprover:
                         return
 
                     draft_id = self._awaiting_edit.pop(user_id, None)
-                    if not draft_id:
+                    if draft_id:
+                        result = self.poster.save_edit(draft_id, text)
+                        if not result.get("ok"):
+                            await update.message.reply_text(
+                                f"Edit failed: {result.get('error')}"
+                            )
+                            return
+                        self.poster._ensure()
+                        draft = self.poster.db.get_draft(draft_id)
+                        self.notify_draft(draft_id, draft or {})
                         await update.message.reply_text(
-                            "Send a photo (or album) + tip to compose, "
-                            "or /rewrite · /start for help."
+                            f"Draft #{draft_id} updated — preview resent above."
                         )
                         return
 
-                    result = self.poster.save_edit(draft_id, text)
-                    if not result.get("ok"):
-                        await update.message.reply_text(
-                            f"Edit failed: {result.get('error')}"
-                        )
+                    # Agentic free-text path
+                    try:
+                        from .agent import agent_enabled, run_agent_turn
+
+                        if agent_enabled():
+                            await update.message.reply_text("Thinking…")
+                            chat_id = str(update.effective_chat.id)
+                            result = await asyncio.get_event_loop().run_in_executor(
+                                None,
+                                lambda: run_agent_turn(
+                                    chat_id, text, telegram=self
+                                ),
+                            )
+                            if result.get("ok"):
+                                await update.message.reply_text(
+                                    (result.get("reply") or "OK")[:4000]
+                                )
+                            else:
+                                await update.message.reply_text(
+                                    f"Agent error: {result.get('error') or result.get('reply')}"
+                                )
+                            return
+                    except Exception as e:
+                        logger.error(f"Agent turn failed: {e}", exc_info=True)
+                        await update.message.reply_text(f"Agent error: {e}")
                         return
-                    self.poster._ensure()
-                    draft = self.poster.db.get_draft(draft_id)
-                    self.notify_draft(draft_id, draft or {})
+
                     await update.message.reply_text(
-                        f"Draft #{draft_id} updated — preview resent above."
+                        "Send a photo (or album) + tip to compose, "
+                        "or enable AGENT_ENABLED=true for chat agent. /start for help."
                     )
 
                 app.add_handler(CommandHandler("start", on_start))
                 app.add_handler(CommandHandler("help", on_start))
+                app.add_handler(CommandHandler("status", on_status))
                 app.add_handler(CommandHandler("rewrite", on_rewrite_cmd))
                 app.add_handler(CallbackQueryHandler(on_callback))
                 app.add_handler(MessageHandler(filters.PHOTO, on_photo))

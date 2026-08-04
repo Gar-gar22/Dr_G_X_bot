@@ -384,6 +384,72 @@ class Database:
                 "CREATE INDEX IF NOT EXISTS idx_safety_type ON safety_events (event_type)"
             )
 
+            cursor.execute(
+                """
+                CREATE TABLE IF NOT EXISTS agent_sessions (
+                    id SERIAL PRIMARY KEY,
+                    chat_id VARCHAR(64) NOT NULL,
+                    status VARCHAR(20) NOT NULL DEFAULT 'active',
+                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+                """
+            )
+            cursor.execute(
+                "CREATE INDEX IF NOT EXISTS idx_agent_sessions_chat ON agent_sessions (chat_id)"
+            )
+
+            cursor.execute(
+                """
+                CREATE TABLE IF NOT EXISTS agent_messages (
+                    id SERIAL PRIMARY KEY,
+                    session_id INT NOT NULL,
+                    role VARCHAR(20) NOT NULL,
+                    content TEXT,
+                    tool_calls TEXT,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+                """
+            )
+            cursor.execute(
+                "CREATE INDEX IF NOT EXISTS idx_agent_messages_session ON agent_messages (session_id)"
+            )
+
+            cursor.execute(
+                """
+                CREATE TABLE IF NOT EXISTS agent_actions (
+                    id SERIAL PRIMARY KEY,
+                    session_id INT,
+                    tool_name VARCHAR(100) NOT NULL,
+                    args_json TEXT,
+                    risk_level VARCHAR(20) NOT NULL DEFAULT 'safe',
+                    status VARCHAR(30) NOT NULL DEFAULT 'planned',
+                    draft_id INT,
+                    result TEXT,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+                """
+            )
+            cursor.execute(
+                "CREATE INDEX IF NOT EXISTS idx_agent_actions_status ON agent_actions (status)"
+            )
+            cursor.execute(
+                "CREATE INDEX IF NOT EXISTS idx_agent_actions_draft ON agent_actions (draft_id)"
+            )
+
+            cursor.execute(
+                """
+                CREATE TABLE IF NOT EXISTS agent_user_prefs (
+                    id SERIAL PRIMARY KEY,
+                    chat_id VARCHAR(64) UNIQUE NOT NULL,
+                    prefs_json TEXT,
+                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+                """
+            )
+
             self.conn.commit()
             self._seed_ai_defaults(cursor)
             self.conn.commit()

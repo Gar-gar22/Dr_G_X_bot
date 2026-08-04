@@ -2469,6 +2469,7 @@ RECORDS_SHELL = """
           <li><a href="{{ url_for('settings_automation') }}" class="nav-link text-white">Automation</a></li>
           <li><a href="{{ url_for('settings_logs') }}" class="nav-link text-white">Logs</a></li>
           <li><a href="{{ url_for('records_drafts') }}" class="nav-link text-white {% if active=='drafts' %}active{% endif %}">Drafts</a></li>
+          <li><a href="{{ url_for('records_agent') }}" class="nav-link text-white {% if active=='agent' %}active{% endif %}">Agent</a></li>
           <li><a href="{{ url_for('records_replies') }}" class="nav-link text-white {% if active=='replies' %}active{% endif %}">Records</a></li>
           <li><a href="{{ url_for('settings_ai') }}" class="nav-link text-white {% if active=='ai' %}active{% endif %}">AI Settings</a></li>
           <li><a href="{{ url_for('settings_media') }}" class="nav-link text-white {% if active=='media' %}active{% endif %}">Media</a></li>
@@ -2492,6 +2493,87 @@ RECORDS_SHELL = """
   </body>
 </html>
 """
+
+
+@app.route("/records/agent")
+@login_required
+def records_agent():
+    """Recent agent sessions and tool actions."""
+    db = get_db_connection()
+    sessions = []
+    actions = []
+    try:
+        from src.agent import memory as agent_memory
+        from src.agent import agent_enabled
+
+        sessions = agent_memory.list_recent_sessions(db, limit=30)
+        actions = agent_memory.list_recent_actions(db, limit=50)
+        enabled = agent_enabled()
+    except Exception as e:
+        logger.error(f"Agent records error: {e}", exc_info=True)
+        enabled = False
+        flash(f"Could not load agent data: {e}", "warning")
+
+    body = render_template_string(
+        """
+        <h2 class="mb-3">Agent activity</h2>
+        <p class="text-muted">
+          AGENT_ENABLED={{ 'true' if enabled else 'false' }}.
+          Telegram free-text uses the LangGraph agent when enabled.
+          Risky X writes appear as Drafts for Approve.
+        </p>
+        <div class="row g-3">
+          <div class="col-md-5">
+            <h5>Sessions</h5>
+            <div class="table-responsive">
+              <table class="table table-sm table-dark">
+                <thead><tr><th>ID</th><th>Chat</th><th>Status</th><th>Updated</th></tr></thead>
+                <tbody>
+                {% for s in sessions %}
+                  <tr>
+                    <td>{{ s.id }}</td>
+                    <td>{{ s.chat_id }}</td>
+                    <td>{{ s.status }}</td>
+                    <td>{{ s.updated_at }}</td>
+                  </tr>
+                {% else %}
+                  <tr><td colspan="4" class="text-muted">No sessions yet</td></tr>
+                {% endfor %}
+                </tbody>
+              </table>
+            </div>
+          </div>
+          <div class="col-md-7">
+            <h5>Actions</h5>
+            <div class="table-responsive">
+              <table class="table table-sm table-dark">
+                <thead><tr><th>ID</th><th>Tool</th><th>Risk</th><th>Status</th><th>Draft</th><th>Result</th></tr></thead>
+                <tbody>
+                {% for a in actions %}
+                  <tr>
+                    <td>{{ a.id }}</td>
+                    <td>{{ a.tool_name }}</td>
+                    <td>{{ a.risk_level }}</td>
+                    <td>{{ a.status }}</td>
+                    <td>{{ a.draft_id or '—' }}</td>
+                    <td class="small">{{ (a.result or '')[:80] }}</td>
+                  </tr>
+                {% else %}
+                  <tr><td colspan="6" class="text-muted">No actions yet</td></tr>
+                {% endfor %}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+        """,
+        sessions=sessions,
+        actions=actions,
+        enabled=enabled,
+    )
+    return render_template_string(
+        RECORDS_SHELL, page_title="Agent", active="agent", body=body
+    )
 
 
 @app.route("/records/drafts", methods=["GET", "POST"])

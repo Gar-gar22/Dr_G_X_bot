@@ -18,7 +18,8 @@ Automated X/Twitter engagement bot with **Telegram man-in-the-loop**, multi-prov
 - PostgreSQL
 - X Developer App (Read + Write)
 - At least one AI API key (optional but recommended)
-- Telegram bot token + your chat id (for MITL notifications)
+- Telegram bot token + your chat id (for MITL notifications) — see [`docs/TELEGRAM_SETUP.md`](docs/TELEGRAM_SETUP.md)
+- Optional agent mode — [`docs/AGENT.md`](docs/AGENT.md) (`AGENT_ENABLED=true`)
 
 ## Quick start
 
