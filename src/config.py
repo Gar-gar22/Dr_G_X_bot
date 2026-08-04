@@ -238,6 +238,16 @@ class Config:
             self.config["agentrouter"]["base_url"] = os.getenv("AGENTROUTER_BASE_URL")
         if os.getenv("AGENTROUTER_MODEL"):
             self.config["agentrouter"]["model"] = os.getenv("AGENTROUTER_MODEL")
+        # Always keep /v1 — bare https://agentrouter.org causes LangChain model_dump crashes.
+        try:
+            from .ai_provider import agentrouter_base_url
+
+            self.config["agentrouter"]["base_url"] = agentrouter_base_url(self.config)
+        except Exception:
+            raw = (self.config.get("agentrouter") or {}).get("base_url") or ""
+            raw = str(raw).strip().rstrip("/")
+            if raw and not raw.endswith("/v1"):
+                self.config["agentrouter"]["base_url"] = f"{raw}/v1"
 
         self.config.setdefault("ai", {})
         # AI_PROVIDER only seeds when no provider was chosen yet (file/DB/dashboard).

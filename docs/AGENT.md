@@ -38,6 +38,8 @@ MITL_ENABLED=true
 
 Allowed AgentRouter models for this bot: `gpt-5.6-sol` (default), `claude-opus-4-8`, `claude-opus-5`. Pick one under Credentials / AI Settings.
 
+AgentRouter rejects generic OpenAI SDK clients (`unauthorized client detected`). This app sends Codex-compatible `Originator` / `User-Agent` headers on AgentRouter requests so chat and tweet generation work.
+
 OpenAI or AgentRouter are recommended for tool-calling. Anthropic / Gemini work via LangChain when configured.
 
 Keep **one** Gunicorn worker:
@@ -95,6 +97,7 @@ When `AGENT_ENABLED=false`, classic photo+tip compose and batch MITL still work.
 | Issue | Fix |
 |-------|-----|
 | “AGENT_ENABLED is false” | Set env and redeploy |
-| Agent error `model_dump` / AgentRouter | Ensure base URL is `https://agentrouter.org/v1` (with `/v1`). Redeploy latest; Chat Completions is forced (Responses API disabled). |
+| Agent error `model_dump` / AgentRouter | Almost always means base URL is `https://agentrouter.org` **without** `/v1`, or `OPENAI_BASE_URL` points there. Set `https://agentrouter.org/v1` (Credentials + env). Redeploy latest. |
+| AgentRouter `unauthorized client` / 401 | Redeploy latest build (Codex client headers). Confirm `AGENTROUTER_API_KEY` is a real AgentRouter token, not an OpenAI key. |
 | No posts, only drafts | Action was risky — Approve in Telegram/Drafts |
 | Conflict getUpdates | Only one web service; see TELEGRAM_SETUP.md |

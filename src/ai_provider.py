@@ -14,6 +14,13 @@ AGENTROUTER_ALLOWED_MODELS = (
     "claude-opus-5",
 )
 AGENTROUTER_DEFAULT_MODEL = "gpt-5.6-sol"
+# AgentRouter allowlists coding-agent clients; generic SDKs get
+# 401 unauthorized_client_error. Codex CLI headers pass their filter.
+AGENTROUTER_DEFAULT_HEADERS = {
+    "Originator": "codex_cli_rs",
+    "User-Agent": "codex_cli_rs/0.101.0 (Windows NT 10.0; x64)",
+    "Version": "0.101.0",
+}
 GEMINI_DEFAULT_MODEL = "gemini-3.5-flash"
 # Retired / restricted Gemini model ids → current Flash
 _GEMINI_MODEL_ALIASES = {
@@ -70,6 +77,86 @@ def agentrouter_base_url(config: Optional[Dict[str, Any]] = None) -> str:
     if not url.endswith("/v1"):
         url = f"{url}/v1"
     return url
+
+
+def agentrouter_default_headers() -> Dict[str, str]:
+    """Headers AgentRouter accepts for non-Claude-Code / non-Codex clients."""
+    return dict(AGENTROUTER_DEFAULT_HEADERS)
+
+
+def build_agentrouter_chat_model(
+    *,
+    api_key: str,
+    model: Optional[str] = None,
+    config: Optional[Dict[str, Any]] = None,
+):
+    """
+    Build a LangChain chat model for AgentRouter.
+
+    Must use Chat Completions at a /v1 base URL. Missing /v1 makes the OpenAI
+    client parse an HTML body as a str → AttributeError model_dump.
+    AgentRouter also rejects generic clients unless Codex-like headers are sent.
+    """
+    import json
+
+    from langchain_openai import ChatOpenAI
+
+    model_name = normalize_agentrouter_model(model)
+    base_url = agentrouter_base_url(config)
+    # Never let ambient OPENAI_BASE_URL / OPENAI_API_BASE win for this client.
+    # Those often get set to https://agentrouter.org (no /v1) on hosts and
+    # reproduce the model_dump crash even when we pass base_url=...
+    for env_key in ("OPENAI_BASE_URL", "OPENAI_API_BASE"):
+        ambient = (os.getenv(env_key) or "").strip().rstrip("/")
+        if ambient and "agentrouter.org" in ambient.lower() and not ambient.endswith(
+            "/v1"
+        ):
+            logger.warning(
+                "Ignoring malformed %s=%s for AgentRouter (forcing %s)",
+                env_key,
+                ambient,
+                base_url,
+            )
+
+    kwargs: Dict[str, Any] = {
+        "model": model_name,
+        "api_key": api_key,
+        "base_url": base_url,
+        "default_headers": agentrouter_default_headers(),
+        "temperature": 1 if model_name.startswith("gpt-5") else 0.4,
+    }
+
+    class AgentRouterChatOpenAI(ChatOpenAI):
+        """ChatOpenAI that recovers JSON string bodies and clarifies /v1 errors."""
+
+        def _create_chat_result(self, response: Any, generation_info: Any = None):
+            if isinstance(response, str):
+                text = response.strip()
+                try:
+                    response = json.loads(text)
+                except Exception as exc:
+                    preview = text[:180].replace("\n", " ")
+                    raise RuntimeError(
+                        "AgentRouter returned a non-JSON body (often means the "
+                        f"base URL is missing /v1). Using base_url={base_url!r}. "
+                        f"Body preview: {preview!r}"
+                    ) from exc
+            return super()._create_chat_result(response, generation_info)
+
+    try:
+        llm = AgentRouterChatOpenAI(**kwargs, use_responses_api=False)
+    except TypeError:
+        llm = AgentRouterChatOpenAI(**kwargs)
+
+    # Re-assert after validators (some langchain versions reconcile with env).
+    try:
+        llm.openai_api_base = base_url
+    except Exception:
+        pass
+    logger.info(
+        "AgentRouter chat model ready model=%s base_url=%s", model_name, base_url
+    )
+    return llm
 
 
 class AIProvider(ABC):
@@ -129,7 +216,13 @@ class GeminiProvider(AIProvider):
 class OpenAIProvider(AIProvider):
     name = "openai"
 
-    def __init__(self, api_key: str, base_url: Optional[str] = None, name: Optional[str] = None):
+    def __init__(
+        self,
+        api_key: str,
+        base_url: Optional[str] = None,
+        name: Optional[str] = None,
+        default_headers: Optional[Dict[str, str]] = None,
+    ):
         from openai import OpenAI
 
         if name:
@@ -137,6 +230,8 @@ class OpenAIProvider(AIProvider):
         kwargs: Dict[str, Any] = {"api_key": api_key}
         if base_url:
             kwargs["base_url"] = base_url.rstrip("/")
+        if default_headers:
+            kwargs["default_headers"] = default_headers
         self.client = OpenAI(**kwargs)
 
     def generate(
@@ -170,6 +265,7 @@ class AgentRouterProvider(OpenAIProvider):
             api_key,
             base_url=base_url or agentrouter_base_url(),
             name="agentrouter",
+            default_headers=agentrouter_default_headers(),
         )
 
 

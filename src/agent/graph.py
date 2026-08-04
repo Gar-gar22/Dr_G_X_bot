@@ -52,10 +52,9 @@ def _chat_model():
         from ..ai_provider import (
             AGENTROUTER_DEFAULT_MODEL,
             agentrouter_api_key,
-            agentrouter_base_url,
+            build_agentrouter_chat_model,
             normalize_agentrouter_model,
         )
-        from langchain_openai import ChatOpenAI
 
         api_key = agentrouter_api_key(cfg_dict)
         model_name = normalize_agentrouter_model(
@@ -67,21 +66,11 @@ def _chat_model():
             raise RuntimeError(
                 "AgentRouter selected but no AGENTROUTER_API_KEY / dashboard key set"
             )
-        base_url = agentrouter_base_url(cfg_dict)
-        # AgentRouter speaks Chat Completions only. gpt-5* names can make
-        # langchain-openai prefer Responses API and then crash with
-        # "'str' object has no attribute 'model_dump'".
-        kwargs: Dict[str, Any] = {
-            "model": model_name,
-            "api_key": api_key,
-            "base_url": base_url,
-            # gpt-5 family over chat completions: temperature must be 1
-            "temperature": 1 if model_name.startswith("gpt-5") else 0.4,
-        }
-        try:
-            return ChatOpenAI(**kwargs, use_responses_api=False)
-        except TypeError:
-            return ChatOpenAI(**kwargs)
+        return build_agentrouter_chat_model(
+            api_key=api_key,
+            model=model_name,
+            config=cfg_dict,
+        )
 
     if provider == "openai":
         from langchain_openai import ChatOpenAI
@@ -94,6 +83,28 @@ def _chat_model():
         )
         if not api_key:
             raise RuntimeError("OpenAI selected but OPENAI_API_KEY is missing")
+        # If this "OpenAI" setup is actually pointed at AgentRouter via env base URL,
+        # route through the AgentRouter builder (needs /v1 + client headers).
+        ambient_base = (
+            os.getenv("OPENAI_BASE_URL")
+            or os.getenv("OPENAI_API_BASE")
+            or (cfg_dict.get("openai") or {}).get("base_url")
+            or ""
+        ).strip().lower()
+        if "agentrouter.org" in ambient_base:
+            from ..ai_provider import build_agentrouter_chat_model
+
+            return build_agentrouter_chat_model(
+                api_key=api_key,
+                model=model_name,
+                config={
+                    **cfg_dict,
+                    "agentrouter": {
+                        **(cfg_dict.get("agentrouter") or {}),
+                        "base_url": ambient_base,
+                    },
+                },
+            )
         return ChatOpenAI(model=model_name, api_key=api_key, temperature=0.4)
 
     if provider == "anthropic":
