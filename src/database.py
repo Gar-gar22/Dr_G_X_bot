@@ -542,7 +542,7 @@ class Database:
         row = cursor.fetchone()
         if row and row.get("c", 0) == 0:
             for provider, model, is_default in [
-                ("gemini", "gemini-2.5-flash", True),
+                ("gemini", "gemini-3.5-flash", True),
                 ("openai", "gpt-4o-mini", False),
                 ("anthropic", "claude-3-5-haiku-latest", False),
                 ("agentrouter", "gpt-5.6-sol", False),
@@ -588,27 +588,35 @@ class Database:
                       )
                     """
                 )
-            # Migrate retired Gemini model ids stored in settings
+            # Migrate retired / new-user-blocked Gemini model ids
             cursor.execute(
                 """
                 UPDATE ai_provider_settings
-                SET model = 'gemini-2.5-flash'
+                SET model = 'gemini-3.5-flash'
                 WHERE provider = 'gemini'
                   AND model IN (
                     'gemini-pro',
                     'gemini-1.5-flash',
                     'gemini-1.5-flash-latest',
+                    'gemini-1.5-pro',
+                    'gemini-1.5-pro-latest',
                     'gemini-2.0-flash',
-                    'gemini-2.0-flash-001'
+                    'gemini-2.0-flash-001',
+                    'gemini-2.5-flash',
+                    'gemini-2.5-pro',
+                    'gemini-3-flash-preview'
                   )
                 """
             )
             cursor.execute(
                 """
                 UPDATE ai_provider_settings
-                SET model = 'gemini-2.5-pro'
+                SET model = 'gemini-3.1-flash-lite'
                 WHERE provider = 'gemini'
-                  AND model IN ('gemini-1.5-pro', 'gemini-1.5-pro-latest')
+                  AND model IN (
+                    'gemini-2.0-flash-lite',
+                    'gemini-2.5-flash-lite'
+                  )
                 """
             )
     

@@ -14,17 +14,21 @@ AGENTROUTER_ALLOWED_MODELS = (
     "claude-opus-5",
 )
 AGENTROUTER_DEFAULT_MODEL = "gpt-5.6-sol"
-GEMINI_DEFAULT_MODEL = "gemini-2.5-flash"
-# Retired / renamed Gemini model ids → current flash/pro
+GEMINI_DEFAULT_MODEL = "gemini-3.5-flash"
+# Retired / restricted Gemini model ids → current Flash
 _GEMINI_MODEL_ALIASES = {
     "gemini-pro": GEMINI_DEFAULT_MODEL,
     "gemini-1.5-flash": GEMINI_DEFAULT_MODEL,
     "gemini-1.5-flash-latest": GEMINI_DEFAULT_MODEL,
-    "gemini-1.5-pro": "gemini-2.5-pro",
-    "gemini-1.5-pro-latest": "gemini-2.5-pro",
+    "gemini-1.5-pro": GEMINI_DEFAULT_MODEL,
+    "gemini-1.5-pro-latest": GEMINI_DEFAULT_MODEL,
     "gemini-2.0-flash": GEMINI_DEFAULT_MODEL,
     "gemini-2.0-flash-001": GEMINI_DEFAULT_MODEL,
-    "gemini-2.0-flash-lite": "gemini-2.5-flash-lite",
+    "gemini-2.0-flash-lite": "gemini-3.1-flash-lite",
+    "gemini-2.5-flash": GEMINI_DEFAULT_MODEL,
+    "gemini-2.5-flash-lite": "gemini-3.1-flash-lite",
+    "gemini-2.5-pro": GEMINI_DEFAULT_MODEL,
+    "gemini-3-flash-preview": GEMINI_DEFAULT_MODEL,
 }
 
 
