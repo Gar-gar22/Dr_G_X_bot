@@ -186,450 +186,266 @@ def verify_admin(email: str, password: str) -> bool:
     return check_password_hash(_ADMIN_PASSWORD_HASH, password)
 
 
-HOME_TEMPLATE = """
-<!doctype html>
-<html lang="en">
-  <head>
+ADMIN_HEAD = """
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>Auto-Reply X Bot Dashboard</title>
+    <title>{{ page_title }} · Dr G</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
     <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.css" rel="stylesheet">
     <link href="{{ url_for('static', filename='style.css') }}" rel="stylesheet">
-  </head>
-  <body>
-    <div class="mobile-topbar px-3 py-2 d-md-none">
-      <button class="btn btn-outline-light btn-sm" type="button" onclick="toggleSidebar()">
-        <i class="bi bi-list" id="navToggleIcon"></i>
-      </button>
-      <span class="fw-semibold">X Bot</span>
-    </div>
-    <div class="d-flex">
-      <nav class="sidebar bg-dark text-white p-3">
-        <h5 class="mb-4">X Bot</h5>
+"""
+
+ADMIN_SIDEBAR = """
+      <nav class="sidebar text-white">
+        <div class="brand">
+          <div class="brand-mark">DG</div>
+          <div class="brand-text">
+            <strong>Dr G</strong>
+            <span>Control center</span>
+          </div>
+        </div>
+        <div class="nav-section">Workspace</div>
         <ul class="nav nav-pills flex-column mb-auto">
           <li class="nav-item">
-            <a href="{{ url_for('dashboard_overview') }}" class="nav-link text-white active">
+            <a href="{{ url_for('dashboard_overview') }}" class="nav-link {% if active=='overview' %}active{% endif %}">
               <i class="bi bi-speedometer2 me-2"></i> Overview
             </a>
           </li>
           <li>
-            <a href="{{ url_for('settings_keywords') }}" class="nav-link text-white">
-              <i class="bi bi-filter-circle me-2"></i> Keywords & Filters
-            </a>
-          </li>
-          <li>
-            <a href="{{ url_for('settings_credentials') }}" class="nav-link text-white">
-              <i class="bi bi-person-badge me-2"></i> Credentials
-            </a>
-          </li>
-          <li>
-            <a href="{{ url_for('settings_automation') }}" class="nav-link text-white">
+            <a href="{{ url_for('settings_automation') }}" class="nav-link {% if active=='automation' %}active{% endif %}">
               <i class="bi bi-gear me-2"></i> Automation
             </a>
           </li>
           <li>
-            <a href="{{ url_for('settings_logs') }}" class="nav-link text-white">
-              <i class="bi bi-journal-text me-2"></i> Logs
-            </a>
-          </li>
-          <li>
-            <a href="{{ url_for('records_drafts') }}" class="nav-link text-white">
+            <a href="{{ url_for('records_drafts') }}" class="nav-link {% if active=='drafts' %}active{% endif %}">
               <i class="bi bi-hourglass-split me-2"></i> Drafts
             </a>
           </li>
           <li>
-            <a href="{{ url_for('records_replies') }}" class="nav-link text-white">
-              <i class="bi bi-chat-left-text me-2"></i> Records
+            <a href="{{ url_for('records_agent') }}" class="nav-link {% if active=='agent' %}active{% endif %}">
+              <i class="bi bi-cpu me-2"></i> Agent
             </a>
           </li>
           <li>
-            <a href="{{ url_for('settings_ai') }}" class="nav-link text-white">
+            <a href="{{ url_for('records_replies') }}" class="nav-link {% if active in ('replies','tweets','quotes') %}active{% endif %}">
+              <i class="bi bi-chat-left-text me-2"></i> Records
+            </a>
+          </li>
+          <div class="nav-section">Configure</div>
+          <li>
+            <a href="{{ url_for('settings_keywords') }}" class="nav-link {% if active=='keywords' %}active{% endif %}">
+              <i class="bi bi-filter-circle me-2"></i> Keywords
+            </a>
+          </li>
+          <li>
+            <a href="{{ url_for('settings_credentials') }}" class="nav-link {% if active=='credentials' %}active{% endif %}">
+              <i class="bi bi-key me-2"></i> Credentials
+            </a>
+          </li>
+          <li>
+            <a href="{{ url_for('settings_ai') }}" class="nav-link {% if active=='ai' %}active{% endif %}">
               <i class="bi bi-robot me-2"></i> AI Settings
             </a>
           </li>
           <li>
-            <a href="{{ url_for('settings_media') }}" class="nav-link text-white">
+            <a href="{{ url_for('settings_media') }}" class="nav-link {% if active=='media' %}active{% endif %}">
               <i class="bi bi-image me-2"></i> Media
             </a>
           </li>
           <li>
-            <a href="{{ url_for('settings_safety') }}" class="nav-link text-white">
+            <a href="{{ url_for('settings_safety') }}" class="nav-link {% if active=='safety' %}active{% endif %}">
               <i class="bi bi-shield-check me-2"></i> Safety
             </a>
           </li>
+          <li>
+            <a href="{{ url_for('settings_logs') }}" class="nav-link {% if active=='logs' %}active{% endif %}">
+              <i class="bi bi-journal-text me-2"></i> Logs
+            </a>
+          </li>
         </ul>
-        <div class="mt-auto pt-3 border-top">
-          <div class="small text-muted mb-2">{{ session.get('user_email', 'User') }}</div>
+        <div class="sidebar-foot">
+          <div class="user-email">{{ session.get('user_email', 'Admin') }}</div>
           <a href="{{ url_for('logout') }}" class="btn btn-outline-light btn-sm w-100">
             <i class="bi bi-box-arrow-right me-1"></i> Logout
           </a>
         </div>
       </nav>
+"""
+
+ADMIN_SHELL = (
+    """<!doctype html>
+<html lang="en">
+  <head>
+"""
+    + ADMIN_HEAD
+    + """
+  </head>
+  <body>
+    <div class="mobile-topbar px-3 py-2 d-md-none">
+      <button class="btn btn-outline-light btn-sm" type="button" onclick="toggleSidebar()" aria-label="Menu">
+        <i class="bi bi-list" id="navToggleIcon"></i>
+      </button>
+      <span class="fw-semibold">Dr G</span>
+    </div>
+    <div class="d-flex">
+"""
+    + ADMIN_SIDEBAR
+    + """
       <main class="flex-grow-1 p-4">
+        {% with messages = get_flashed_messages(with_categories=true) %}
+          {% if messages %}
+            {% for category, message in messages %}
+              <div class="alert alert-{{ category }} alert-dismissible fade show" role="alert">
+                {{ message }}
+                <button type="button" class="btn-close btn-close-white" data-bs-dismiss="alert"></button>
+              </div>
+            {% endfor %}
+          {% endif %}
+        {% endwith %}
+        {{ body|safe }}
+      </main>
+    </div>
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
+    <script>
+      function toggleSidebar() {
+        var sidebar = document.querySelector('.sidebar');
+        var icon = document.getElementById('navToggleIcon');
+        if (sidebar) {
+          var isOpen = sidebar.classList.toggle('sidebar-open');
+          if (icon) {
+            icon.classList.toggle('bi-list', !isOpen);
+            icon.classList.toggle('bi-x-lg', isOpen);
+          }
+        }
+      }
+    </script>
+  </body>
+</html>
+"""
+)
+
+
+def render_admin(page_title: str, active: str, body: str, **ctx):
+    """Render a page inside the shared admin shell."""
+    return render_template_string(
+        ADMIN_SHELL,
+        page_title=page_title,
+        active=active,
+        body=body,
+        **ctx,
+    )
+
+
+OVERVIEW_BODY = """
         {% if not has_twitter %}
-        <div class="alert alert-warning d-flex justify-content-between align-items-center mb-4">
+        <div class="alert alert-warning d-flex flex-wrap justify-content-between align-items-center gap-3 mb-4">
           <div>
-            <strong>Connect your X (Twitter) account</strong><br>
-            <span class="small">Add your API keys first so the bot can search tweets and send replies.</span>
+            <strong>Connect X</strong><br>
+            <span class="small">Add API keys so the bot can search and post.</span>
           </div>
-          <a href="{{ url_for('settings_credentials') }}" class="btn btn-sm btn-primary">
-            Connect Twitter
-          </a>
+          <a href="{{ url_for('settings_credentials') }}" class="btn btn-sm btn-primary">Open credentials</a>
         </div>
         {% endif %}
-        <h2 class="mb-4">Overview</h2>
+        <div class="page-header">
+          <h2>Overview</h2>
+          <p>Live activity, connection health, and pending MITL drafts.</p>
+        </div>
         {% if twitter_status or gemini_status is not none %}
-        <div class="row g-3 mb-3">
-          <div class="col-12">
-            <div class="card shadow-sm">
-              <div class="card-body py-2">
-                <h6 class="card-title text-muted small mb-2">Connection status</h6>
-                <div class="d-flex flex-wrap gap-3">
-                  {% if twitter_status %}
-                  <span class="d-flex align-items-center">
-                    <span class="badge bg-{{ 'success' if twitter_status == 'ok' else 'danger' if twitter_status == 'error' else 'secondary' }} me-2">
-                      <i class="bi bi-twitter"></i> Twitter
-                    </span>
-                    <span class="small">{{ 'Connected' if twitter_status == 'ok' else twitter_message or 'Not connected' if twitter_status == 'error' else 'Not configured' }}</span>
-                  </span>
-                  {% endif %}
-                  {% if gemini_status is not none %}
-                  <span class="d-flex align-items-center">
-                    <span class="badge bg-{{ 'success' if gemini_status == 'ok' else 'warning' if gemini_status == 'configured' else 'secondary' }} me-2">
-                      <i class="bi bi-robot"></i> Gemini
-                    </span>
-                    <span class="small">{{ 'AI replies on' if gemini_status == 'ok' else 'Configured (off)' if gemini_status == 'configured' else 'Not configured' }}</span>
-                  </span>
-                  {% endif %}
-                </div>
-              </div>
-            </div>
-          </div>
+        <div class="status-bar mb-4">
+          {% if twitter_status %}
+          <span class="status-pill">
+            <span class="status-dot {% if twitter_status == 'ok' %}ok{% elif twitter_status == 'error' %}err{% endif %}"></span>
+            X · {{ 'Connected' if twitter_status == 'ok' else twitter_message or 'Error' if twitter_status == 'error' else 'Not configured' }}
+          </span>
+          {% endif %}
+          {% if gemini_status is not none %}
+          <span class="status-pill">
+            <span class="status-dot {% if gemini_status == 'ok' %}ok{% elif gemini_status == 'configured' %}warn{% endif %}"></span>
+            AI · {{ 'On' if gemini_status == 'ok' else 'Configured (off)' if gemini_status == 'configured' else 'Off' }}
+          </span>
+          {% endif %}
         </div>
         {% endif %}
         <div class="row g-3 mb-4">
-          <div class="col-md-3">
-            <div class="card shadow-sm">
-              <div class="card-body">
-                <h6 class="card-title text-muted">Total Replies</h6>
-                <p class="display-6 mb-0">{{ total_replied }}</p>
-              </div>
-            </div>
+          <div class="col-6 col-md-4 col-xl-2">
+            <div class="card stat-card h-100"><div class="card-body">
+              <h6 class="card-title">Replies</h6>
+              <p class="display-6 mb-0">{{ total_replied }}</p>
+            </div></div>
           </div>
-          <div class="col-md-3">
-            <div class="card shadow-sm">
-              <div class="card-body">
-                <h6 class="card-title text-muted">Total Tweets Posted</h6>
-                <p class="display-6 mb-0">{{ total_tweets_posted }}</p>
-              </div>
-            </div>
+          <div class="col-6 col-md-4 col-xl-2">
+            <div class="card stat-card h-100"><div class="card-body">
+              <h6 class="card-title">Tweets</h6>
+              <p class="display-6 mb-0">{{ total_tweets_posted }}</p>
+            </div></div>
           </div>
-          <div class="col-md-3">
-            <div class="card shadow-sm">
-              <div class="card-body">
-                <h6 class="card-title text-muted">Total Quote Retweets</h6>
-                <p class="display-6 mb-0">{{ total_quote_retweets }}</p>
-              </div>
-            </div>
+          <div class="col-6 col-md-4 col-xl-2">
+            <div class="card stat-card h-100"><div class="card-body">
+              <h6 class="card-title">Quotes</h6>
+              <p class="display-6 mb-0">{{ total_quote_retweets }}</p>
+            </div></div>
           </div>
-          <div class="col-md-3">
-            <div class="card shadow-sm">
-              <div class="card-body">
-                <h6 class="card-title text-muted">Pending Drafts</h6>
-                <p class="display-6 mb-0">{{ pending_drafts }}</p>
-                <a href="{{ url_for('records_drafts') }}" class="small">Review drafts</a>
-              </div>
-            </div>
+          <div class="col-6 col-md-4 col-xl-2">
+            <div class="card stat-card h-100"><div class="card-body">
+              <h6 class="card-title">Drafts</h6>
+              <p class="display-6 mb-0">{{ pending_drafts }}</p>
+              <a href="{{ url_for('records_drafts') }}" class="small">Review</a>
+            </div></div>
           </div>
-          <div class="col-md-3">
-            <div class="card shadow-sm">
-              <div class="card-body">
-                <h6 class="card-title text-muted">Blocked today</h6>
-                <p class="display-6 mb-0">{{ blocked_today }}</p>
-                <a href="{{ url_for('settings_safety') }}" class="small">Safety settings</a>
-              </div>
-            </div>
+          <div class="col-6 col-md-4 col-xl-2">
+            <div class="card stat-card h-100"><div class="card-body">
+              <h6 class="card-title">Blocked</h6>
+              <p class="display-6 mb-0">{{ blocked_today }}</p>
+              <a href="{{ url_for('settings_safety') }}" class="small">Safety</a>
+            </div></div>
           </div>
-          <div class="col-md-3">
-            <div class="card shadow-sm">
-              <div class="card-body">
-                <h6 class="card-title text-muted">Last Reply At</h6>
-                <p class="h5 mb-0">{{ last_reply or 'N/A' }}</p>
-              </div>
-            </div>
+          <div class="col-6 col-md-4 col-xl-2">
+            <div class="card stat-card h-100"><div class="card-body">
+              <h6 class="card-title">Last reply</h6>
+              <p class="h5 mb-0 mt-2" style="font-size:0.95rem;">{{ last_reply or '—' }}</p>
+            </div></div>
           </div>
         </div>
 
-        <h4 class="mt-4">Recent Replies</h4>
-        <div class="card shadow-sm">
-          <div class="card-body">
+        <div class="d-flex justify-content-between align-items-end mb-3">
+          <h4 class="mb-0">Recent replies</h4>
+          <a href="{{ url_for('records_replies') }}" class="small">View all</a>
+        </div>
+        <div class="card"><div class="card-body p-0">
             {% if recent_replies %}
               <div class="table-responsive">
                 <table class="table table-sm align-middle mb-0">
                   <thead>
                     <tr>
-                      <th scope="col">Tweet ID</th>
-                      <th scope="col">Reply ID</th>
-                      <th scope="col">Source</th>
-                      <th scope="col">Keyword</th>
-                      <th scope="col">Replied At</th>
+                      <th>Tweet</th>
+                      <th>Reply</th>
+                      <th>Source</th>
+                      <th>Keyword</th>
+                      <th>When</th>
                     </tr>
                   </thead>
                   <tbody>
                     {% for row in recent_replies %}
                     <tr>
-                      <td>{{ row['tweet_id'] }}</td>
-                      <td>{{ row['reply_tweet_id'] }}</td>
+                      <td class="font-monospace small">{{ row['tweet_id'] }}</td>
+                      <td class="font-monospace small">{{ row['reply_tweet_id'] }}</td>
                       <td><span class="badge bg-secondary">{{ row['source'] }}</span></td>
-                      <td>{{ row['keyword'] or '-' }}</td>
-                      <td>{{ row['replied_at'] }}</td>
+                      <td>{{ row['keyword'] or '—' }}</td>
+                      <td class="small text-muted">{{ row['replied_at'] }}</td>
                     </tr>
                     {% endfor %}
                   </tbody>
                 </table>
               </div>
             {% else %}
-              <p class="mb-0 text-muted">No replies recorded yet.</p>
+              <p class="mb-0 text-muted p-4">No replies recorded yet.</p>
             {% endif %}
-          </div>
-        </div>
-      </main>
-    </div>
-    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
-    <script>
-      function toggleSidebar() {
-        var sidebar = document.querySelector('.sidebar');
-        var icon = document.getElementById('navToggleIcon');
-        if (sidebar) {
-          var isOpen = sidebar.classList.toggle('sidebar-open');
-          if (icon) {
-            icon.classList.toggle('bi-list', !isOpen);
-            icon.classList.toggle('bi-x-lg', isOpen);
-          }
-        }
-      }
-    </script>
-  </body>
-</html>
+        </div></div>
 """
 
-
-CREDENTIALS_TEMPLATE = """
-<!doctype html>
-<html lang="en">
-  <head>
-    <meta charset="utf-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>Connect Twitter & Gemini - X Bot</title>
-    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
-    <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.css" rel="stylesheet">
-    <link href="{{ url_for('static', filename='style.css') }}" rel="stylesheet">
-  </head>
-  <body>
-    <div class="mobile-topbar px-3 py-2 d-md-none">
-      <button class="btn btn-outline-light btn-sm" type="button" onclick="toggleSidebar()">
-        <i class="bi bi-list" id="navToggleIcon"></i>
-      </button>
-      <span class="fw-semibold">X Bot</span>
-    </div>
-    <div class="d-flex">
-      <nav class="sidebar bg-dark text-white p-3">
-        <h5 class="mb-4">X Bot</h5>
-        <ul class="nav nav-pills flex-column mb-auto">
-          <li class="nav-item">
-            <a href="{{ url_for('dashboard_overview') }}" class="nav-link text-white">
-              <i class="bi bi-speedometer2 me-2"></i> Overview
-            </a>
-          </li>
-          <li>
-            <a href="{{ url_for('settings_keywords') }}" class="nav-link text-white">
-              <i class="bi bi-filter-circle me-2"></i> Keywords & Filters
-            </a>
-          </li>
-          <li>
-            <a href="{{ url_for('settings_credentials') }}" class="nav-link text-white active">
-              <i class="bi bi-person-badge me-2"></i> Credentials
-            </a>
-          </li>
-          <li>
-            <a href="{{ url_for('settings_automation') }}" class="nav-link text-white">
-              <i class="bi bi-gear me-2"></i> Automation
-            </a>
-          </li>
-          <li>
-            <a href="{{ url_for('settings_logs') }}" class="nav-link text-white">
-              <i class="bi bi-journal-text me-2"></i> Logs
-            </a>
-          </li>
-          <li>
-            <a href="{{ url_for('records_drafts') }}" class="nav-link text-white">
-              <i class="bi bi-hourglass-split me-2"></i> Drafts
-            </a>
-          </li>
-          <li>
-            <a href="{{ url_for('records_replies') }}" class="nav-link text-white">
-              <i class="bi bi-chat-left-text me-2"></i> Records
-            </a>
-          </li>
-          <li>
-            <a href="{{ url_for('settings_ai') }}" class="nav-link text-white">
-              <i class="bi bi-robot me-2"></i> AI Settings
-            </a>
-          </li>
-          <li>
-            <a href="{{ url_for('settings_media') }}" class="nav-link text-white">
-              <i class="bi bi-image me-2"></i> Media
-            </a>
-          </li>
-          <li>
-            <a href="{{ url_for('settings_safety') }}" class="nav-link text-white">
-              <i class="bi bi-shield-check me-2"></i> Safety
-            </a>
-          </li>
-        </ul>
-        <div class="mt-auto pt-3 border-top">
-          <div class="small text-muted mb-2">{{ session.get('user_email', 'User') }}</div>
-          <a href="{{ url_for('logout') }}" class="btn btn-outline-light btn-sm w-100">
-            <i class="bi bi-box-arrow-right me-1"></i> Logout
-          </a>
-        </div>
-      </nav>
-      <main class="flex-grow-1 p-4">
-        <div class="page-narrow">
-          {% with messages = get_flashed_messages(with_categories=true) %}
-            {% if messages %}
-              {% for category, message in messages %}
-                <div class="alert alert-{{ category }} alert-dismissible fade show" role="alert">
-                  {{ message }}
-                  <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
-                </div>
-              {% endfor %}
-            {% endif %}
-          {% endwith %}
-
-          <h2 class="mb-4">Connect Twitter & Gemini</h2>
-
-          {% if config_error %}
-            <div class="alert alert-danger">{{ config_error }}</div>
-          {% endif %}
-
-          {% if is_connected and connected_user %}
-          <div class="alert alert-success d-flex justify-content-between align-items-center mb-4">
-            <div>
-              <strong>Connected as @{{ connected_user.get('username') }}</strong><br>
-              <span class="small">Followers: {{ connected_user.get('followers_count', 'N/A') }}</span>
-            </div>
-            <form method="post" style="display: inline;">
-              <input type="hidden" name="disconnect" value="1">
-              <button type="submit" class="btn btn-outline-danger btn-sm" onclick="return confirm('Are you sure you want to disconnect your Twitter account?')">
-                <i class="bi bi-x-circle me-1"></i>Disconnect
-              </button>
-            </form>
-          </div>
-          {% endif %}
-
-          <form method="post" class="row g-3">
-            <div class="col-12">
-              <h5>Twitter / X API (OAuth 1.0a)</h5>
-              <p class="small text-muted mb-0">
-                Use <strong>Keys and tokens</strong>: API Key (= Consumer Key), API Key Secret (= Consumer Secret),
-                Access Token, Access Token Secret. Optional Bearer Token for app-only reads.
-                Do <strong>not</strong> use OAuth 2.0 Client ID / Client Secret here.
-              </p>
-            </div>
-            <div class="col-md-6">
-              <label class="form-label">API Key / Consumer Key</label>
-              <input type="password" name="consumer_key" class="form-control" placeholder="{{ '••••••••' if x_api.get('consumer_key') else '' }}" autocomplete="off">
-              <small class="text-muted">Leave blank to keep existing</small>
-            </div>
-            <div class="col-md-6">
-              <label class="form-label">API Key Secret / Consumer Secret</label>
-              <input type="password" name="consumer_secret" class="form-control" placeholder="{{ '••••••••' if x_api.get('consumer_secret') else '' }}" autocomplete="off">
-            </div>
-            <div class="col-md-6">
-              <label class="form-label">Access Token (user context)</label>
-              <input type="password" name="access_token" class="form-control" placeholder="{{ '••••••••' if x_api.get('access_token') else '' }}" autocomplete="off">
-            </div>
-            <div class="col-md-6">
-              <label class="form-label">Access Token Secret</label>
-              <input type="password" name="access_token_secret" class="form-control" placeholder="{{ '••••••••' if x_api.get('access_token_secret') else '' }}" autocomplete="off">
-            </div>
-            <div class="col-md-6">
-              <label class="form-label">Bearer Token (optional, app-only)</label>
-              <input type="password" name="bearer_token" class="form-control" placeholder="{{ '••••••••' if x_api.get('bearer_token') else '' }}" autocomplete="off">
-            </div>
-
-            <div class="col-12 mt-4">
-              <h5>AI Providers</h5>
-              <p class="text-muted small mb-2">Leave API key blank to keep the existing key. Manage niches/system prompts under AI Settings.</p>
-            </div>
-            <div class="col-md-6">
-              <label class="form-label">Gemini API Key</label>
-              <input type="password" name="gemini_api_key" class="form-control" placeholder="{{ '••••••••' if gemini.get('api_key') else '' }}" autocomplete="off">
-            </div>
-            <div class="col-md-3 d-flex align-items-end">
-              <div class="form-check">
-                <input class="form-check-input" type="checkbox" name="gemini_enabled" id="gemini_enabled" {% if gemini.get('enabled') %}checked{% endif %}>
-                <label class="form-check-label" for="gemini_enabled">Enable Gemini</label>
-              </div>
-            </div>
-            <div class="col-md-6">
-              <label class="form-label">OpenAI API Key</label>
-              <input type="password" name="openai_api_key" class="form-control" placeholder="{{ '••••••••' if openai.get('api_key') else '' }}" autocomplete="off">
-            </div>
-            <div class="col-md-3 d-flex align-items-end">
-              <div class="form-check">
-                <input class="form-check-input" type="checkbox" name="openai_enabled" id="openai_enabled" {% if openai.get('enabled') %}checked{% endif %}>
-                <label class="form-check-label" for="openai_enabled">Enable OpenAI</label>
-              </div>
-            </div>
-            <div class="col-md-6">
-              <label class="form-label">Anthropic API Key</label>
-              <input type="password" name="anthropic_api_key" class="form-control" placeholder="{{ '••••••••' if anthropic.get('api_key') else '' }}" autocomplete="off">
-            </div>
-            <div class="col-md-3 d-flex align-items-end">
-              <div class="form-check">
-                <input class="form-check-input" type="checkbox" name="anthropic_enabled" id="anthropic_enabled" {% if anthropic.get('enabled') %}checked{% endif %}>
-                <label class="form-check-label" for="anthropic_enabled">Enable Anthropic</label>
-              </div>
-            </div>
-            <div class="col-md-4">
-              <label class="form-label">Default AI Provider</label>
-              <select name="ai_provider" class="form-select">
-                <option value="gemini" {% if ai.get('provider') == 'gemini' %}selected{% endif %}>Gemini</option>
-                <option value="openai" {% if ai.get('provider') == 'openai' %}selected{% endif %}>OpenAI</option>
-                <option value="anthropic" {% if ai.get('provider') == 'anthropic' %}selected{% endif %}>Anthropic</option>
-              </select>
-            </div>
-
-            <div class="col-12 mt-4">
-              <button type="submit" class="btn btn-primary">
-                <i class="bi bi-link-45deg me-1"></i> Save & Test Connection
-              </button>
-            </div>
-          </form>
-        </div>
-      </main>
-    </div>
-    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
-    <script>
-      function toggleSidebar() {
-        var sidebar = document.querySelector('.sidebar');
-        var icon = document.getElementById('navToggleIcon');
-        if (sidebar) {
-          var isOpen = sidebar.classList.toggle('sidebar-open');
-          if (icon) {
-            icon.classList.toggle('bi-list', !isOpen);
-            icon.classList.toggle('bi-x-lg', isOpen);
-          }
-        }
-      }
-    </script>
-  </body>
-</html>
-"""
-
+HOME_TEMPLATE = OVERVIEW_BODY
 
 LANDING_PAGE_TEMPLATE = """
 <!doctype html>
@@ -637,187 +453,68 @@ LANDING_PAGE_TEMPLATE = """
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>Auto-Reply X Bot - Automated Twitter Engagement</title>
+    <title>Dr G — X engagement control</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
     <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.css" rel="stylesheet">
-    <style>
-      body {
-        background: linear-gradient(135deg, #0b1020 0%, #1e293b 100%);
-        color: #f5f5f5;
-        font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-        min-height: 100vh;
-      }
-      .hero-section {
-        padding: 80px 0;
-        text-align: center;
-      }
-      .hero-title {
-        font-size: 3.5rem;
-        font-weight: 700;
-        margin-bottom: 1.5rem;
-        background: linear-gradient(135deg, #6366f1, #22d3ee);
-        -webkit-background-clip: text;
-        -webkit-text-fill-color: transparent;
-        background-clip: text;
-      }
-      .hero-subtitle {
-        font-size: 1.25rem;
-        color: #94a3b8;
-        margin-bottom: 2.5rem;
-        max-width: 600px;
-        margin-left: auto;
-        margin-right: auto;
-      }
-      .feature-card {
-        background: rgba(15, 23, 42, 0.9);
-        border: 1px solid rgba(148, 163, 184, 0.2);
-        border-radius: 1rem;
-        padding: 2rem;
-        margin-bottom: 2rem;
-        transition: transform 0.3s, border-color 0.3s;
-        color: #e5e7eb;
-      }
-      .feature-card:hover {
-        transform: translateY(-5px);
-        border-color: #6366f1;
-      }
-      .feature-card h4 {
-        color: #f5f5f5;
-        margin-bottom: 1rem;
-      }
-      .feature-card p {
-        color: #94a3b8;
-        margin-bottom: 0;
-      }
-      .feature-icon {
-        font-size: 3rem;
-        color: #6366f1;
-        margin-bottom: 1rem;
-      }
-      .btn-primary-custom {
-        background: linear-gradient(135deg, #6366f1, #22d3ee);
-        border: none;
-        padding: 0.75rem 2rem;
-        font-size: 1.1rem;
-        font-weight: 600;
-        border-radius: 0.5rem;
-        transition: transform 0.2s;
-        color: white;
-      }
-      .btn-primary-custom:hover {
-        transform: scale(1.05);
-        color: white;
-      }
-      .navbar {
-        background: rgba(15, 23, 42, 0.9);
-        backdrop-filter: blur(10px);
-      }
-    </style>
+    <link href="{{ url_for('static', filename='style.css') }}" rel="stylesheet">
   </head>
   <body>
-    <nav class="navbar navbar-expand-lg navbar-dark">
+    <nav class="navbar navbar-expand-lg navbar-dark landing-nav">
       <div class="container">
-        <a class="navbar-brand fw-bold" href="/">
-          <i class="bi bi-twitter me-2"></i>X Bot
+        <a class="navbar-brand d-flex align-items-center gap-2" href="/">
+          <span class="brand-mark" style="width:32px;height:32px;border-radius:9px;display:grid;place-items:center;font-size:0.75rem;font-weight:700;color:#041512;background:linear-gradient(145deg,#3ecfbe,#2a9d8f);">DG</span>
+          <span class="fw-semibold">Dr G</span>
         </a>
-        <div class="ms-auto">
-          <a href="{{ url_for('login') }}" class="btn btn-primary-custom">Login</a>
-        </div>
+        <a href="{{ url_for('login') }}" class="btn btn-primary btn-sm">Sign in</a>
       </div>
     </nav>
 
-    <div class="hero-section">
+    <section class="landing-hero">
       <div class="container">
-        <h1 class="hero-title">Auto-Reply X Bot</h1>
-        <p class="hero-subtitle">
-          Automate your Twitter engagement with intelligent replies. 
-          Connect with your audience 24/7 using AI-powered responses.
+        <p class="eyebrow">X · Telegram · AI</p>
+        <h1>Operate engagement with judgment.</h1>
+        <p class="lede">
+          Drafts, agent tools, and man-in-the-loop approvals — so nothing ships to X
+          without your review when it matters.
         </p>
-        <a href="{{ url_for('login') }}" class="btn btn-primary-custom btn-lg">
-          <i class="bi bi-box-arrow-in-right me-2"></i>Login to Dashboard
-        </a>
-      </div>
-    </div>
-
-    <div class="container py-5" id="features">
-      <div class="row">
-        <div class="col-md-4">
-          <div class="feature-card text-center">
-            <i class="bi bi-robot feature-icon"></i>
-            <h4>AI-Powered Replies</h4>
-            <p>
-              Generate thoughtful, contextual replies using Google Gemini AI. 
-              Your bot will engage naturally with your audience.
-            </p>
-          </div>
-        </div>
-        <div class="col-md-4">
-          <div class="feature-card text-center">
-            <i class="bi bi-funnel feature-icon"></i>
-            <h4>Smart Filtering</h4>
-            <p>
-              Set keywords and filters to target the right conversations. 
-              Control who you engage with and when.
-            </p>
-          </div>
-        </div>
-        <div class="col-md-4">
-          <div class="feature-card text-center">
-            <i class="bi bi-clock-history feature-icon"></i>
-            <h4>Automated Scheduling</h4>
-            <p>
-              Run your bot on a schedule. Set it and forget it - 
-              your bot will engage automatically at optimal times.
-            </p>
-          </div>
+        <div class="cta-row">
+          <a href="{{ url_for('login') }}" class="btn btn-primary btn-lg">Open dashboard</a>
         </div>
       </div>
-    </div>
+    </section>
 
-    <footer class="mt-5 py-5" style="background: rgba(15, 23, 42, 0.9); border-top: 1px solid rgba(148, 163, 184, 0.2);">
+    <section class="landing-panel" id="features">
       <div class="container">
-        <div class="row">
-          <div class="col-md-4 mb-4 mb-md-0">
-            <h5 class="text-light mb-3">
-              <i class="bi bi-twitter me-2"></i>X Bot
-            </h5>
-            <p class="text-muted" style="color: #94a3b8 !important;">
-              Automate your Twitter engagement with intelligent AI-powered replies. 
-              Connect with your audience 24/7.
-            </p>
+        <h2>What you control</h2>
+        <p class="text-muted mb-0">One place for automation, drafts, and Telegram-driven agent actions.</p>
+        <div class="feature-row">
+          <div class="feature-item">
+            <h3>Man-in-the-loop</h3>
+            <p>Approve, edit, or reject before anything posts — from Telegram or Drafts.</p>
           </div>
-          <div class="col-md-4 mb-4 mb-md-0">
-            <h5 class="text-light mb-3">Features</h5>
-            <ul class="list-unstyled">
-              <li><a href="#features" class="text-muted text-decoration-none" style="color: #94a3b8 !important;">AI-Powered Replies</a></li>
-              <li><a href="#features" class="text-muted text-decoration-none" style="color: #94a3b8 !important;">Smart Filtering</a></li>
-              <li><a href="#features" class="text-muted text-decoration-none" style="color: #94a3b8 !important;">Automated Scheduling</a></li>
-            </ul>
+          <div class="feature-item">
+            <h3>Agent + tools</h3>
+            <p>Chat naturally; the agent searches and posts via X tools under safety policy.</p>
           </div>
-          <div class="col-md-4">
-            <h5 class="text-light mb-3">Access</h5>
-            <ul class="list-unstyled">
-              <li><a href="{{ url_for('login') }}" class="text-muted text-decoration-none" style="color: #94a3b8 !important;">Login to Dashboard</a></li>
-            </ul>
+          <div class="feature-item">
+            <h3>Safety budgets</h3>
+            <p>Daily and monthly caps, quality gates, and an audit trail of blocked events.</p>
           </div>
         </div>
-        <hr class="my-4" style="border-color: rgba(148, 163, 184, 0.2);">
-        <div class="text-center">
-          <p class="text-muted mb-0" style="color: #94a3b8 !important;">
-            &copy; 2024 Auto-Reply X Bot. Built for automated Twitter engagement.
-          </p>
-          <p class="text-muted mb-0 mt-2" style="color: #94a3b8 !important;">
-            A project by <a href="https://x.com/ohakwengr" target="_blank" rel="noopener noreferrer" class="text-decoration-none" style="color: #6366f1 !important;">Abdul IB</a>
-          </p>
-        </div>
+      </div>
+    </section>
+
+    <footer class="landing-footer">
+      <div class="container d-flex flex-wrap justify-content-between gap-2">
+        <span>Dr G · control center</span>
+        <span>A project by <a href="https://x.com/ohakwengr" target="_blank" rel="noopener noreferrer">Abdul IB</a></span>
       </div>
     </footer>
-
-    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
   </body>
 </html>
 """
-
 
 LOGIN_TEMPLATE = """
 <!doctype html>
@@ -825,44 +522,27 @@ LOGIN_TEMPLATE = """
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>Login - X Bot</title>
+    <title>Sign in · Dr G</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
     <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.css" rel="stylesheet">
     <link href="{{ url_for('static', filename='style.css') }}" rel="stylesheet">
-    <style>
-      body {
-        background: radial-gradient(circle at top left, #1e293b, #020617);
-        min-height: 100vh;
-        display: flex;
-        align-items: center;
-        justify-content: center;
-      }
-      .login-card {
-        background: rgba(15, 23, 42, 0.9);
-        border: 1px solid rgba(148, 163, 184, 0.2);
-        border-radius: 1rem;
-        padding: 2.5rem;
-        max-width: 400px;
-        width: 100%;
-      }
-      .login-title {
-        color: #f5f5f5;
-        margin-bottom: 1.5rem;
-      }
-    </style>
   </head>
-  <body>
+  <body class="page-login">
     <div class="login-card">
-      <h2 class="login-title text-center mb-4">
-        <i class="bi bi-twitter me-2"></i>X Bot Login
-      </h2>
-      
+      <div class="login-brand">
+        <div class="brand-mark">DG</div>
+        <h1 class="login-title">Dr G</h1>
+        <p class="login-sub">Admin sign-in</p>
+      </div>
+
       {% with messages = get_flashed_messages(with_categories=true) %}
         {% if messages %}
           {% for category, message in messages %}
             <div class="alert alert-{{ category }} alert-dismissible fade show" role="alert">
               {{ message }}
-              <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+              <button type="button" class="btn-close btn-close-white" data-bs-dismiss="alert"></button>
             </div>
           {% endfor %}
         {% endif %}
@@ -870,19 +550,19 @@ LOGIN_TEMPLATE = """
 
       <form method="post">
         <div class="mb-3">
-          <label class="form-label text-light">Email Address</label>
-          <input type="email" name="email" class="form-control" required autofocus placeholder="Admin email">
+          <label class="form-label">Email</label>
+          <input type="email" name="email" class="form-control" required autofocus placeholder="you@example.com" autocomplete="username">
         </div>
-        <div class="mb-3">
-          <label class="form-label text-light">Password</label>
-          <input type="password" name="password" class="form-control" required placeholder="Admin password">
+        <div class="mb-4">
+          <label class="form-label">Password</label>
+          <input type="password" name="password" class="form-control" required placeholder="••••••••" autocomplete="current-password">
         </div>
         <button type="submit" class="btn btn-primary w-100 mb-3">
-          <i class="bi bi-box-arrow-in-right me-2"></i>Login
+          Continue
         </button>
         <div class="text-center">
-          <a href="{{ url_for('landing') }}" class="text-muted text-decoration-none">
-            <i class="bi bi-arrow-left me-1"></i>Back to Home
+          <a href="{{ url_for('landing') }}" class="text-muted small text-decoration-none">
+            ← Back
           </a>
         </div>
       </form>
@@ -891,7 +571,6 @@ LOGIN_TEMPLATE = """
   </body>
 </html>
 """
-
 
 AUTOMATION_TEMPLATE = """
 <!doctype html>
@@ -912,8 +591,14 @@ AUTOMATION_TEMPLATE = """
       <span class="fw-semibold">X Bot</span>
     </div>
     <div class="d-flex">
-      <nav class="sidebar bg-dark text-white p-3">
-        <h5 class="mb-4">X Bot</h5>
+      <nav class="sidebar text-white">
+        <div class="brand">
+          <div class="brand-mark">DG</div>
+          <div class="brand-text">
+            <strong>Dr G</strong>
+            <span>Control center</span>
+          </div>
+        </div>
         <ul class="nav nav-pills flex-column mb-auto">
           <li class="nav-item">
             <a href="{{ url_for('dashboard_overview') }}" class="nav-link text-white">
@@ -1254,8 +939,14 @@ KEYWORDS_TEMPLATE = """
       <span class="fw-semibold">X Bot</span>
     </div>
     <div class="d-flex">
-      <nav class="sidebar bg-dark text-white p-3">
-        <h5 class="mb-4">X Bot</h5>
+      <nav class="sidebar text-white">
+        <div class="brand">
+          <div class="brand-mark">DG</div>
+          <div class="brand-text">
+            <strong>Dr G</strong>
+            <span>Control center</span>
+          </div>
+        </div>
         <ul class="nav nav-pills flex-column mb-auto">
           <li class="nav-item">
             <a href="{{ url_for('dashboard_overview') }}" class="nav-link text-white">
@@ -1480,8 +1171,14 @@ LOGS_TEMPLATE = """
       <span class="fw-semibold">X Bot</span>
     </div>
     <div class="d-flex">
-      <nav class="sidebar bg-dark text-white p-3">
-        <h5 class="mb-4">X Bot</h5>
+      <nav class="sidebar text-white">
+        <div class="brand">
+          <div class="brand-mark">DG</div>
+          <div class="brand-text">
+            <strong>Dr G</strong>
+            <span>Control center</span>
+          </div>
+        </div>
         <ul class="nav nav-pills flex-column mb-auto">
           <li class="nav-item">
             <a href="{{ url_for('dashboard_overview') }}" class="nav-link text-white">
@@ -1729,9 +1426,10 @@ def dashboard_overview():
         except Exception as db_init_error:
             logger.error(f"Failed to initialize database: {db_init_error}")
             # Continue with defaults - database might not be set up yet
-            return render_template_string(
-                HOME_TEMPLATE,
-                total_replied=0,
+            return render_admin(
+            "Overview",
+            "overview",
+            render_template_string(OVERVIEW_BODY, total_replied=0,
                 total_tweets_posted=0,
                 total_quote_retweets=0,
                 pending_drafts=0,
@@ -1741,8 +1439,8 @@ def dashboard_overview():
                 has_twitter=has_twitter,
                 twitter_status=twitter_status,
                 twitter_message=twitter_message,
-                gemini_status=gemini_status,
-            )
+                gemini_status=gemini_status,),
+        )
         
         # Now query the database
         try:
@@ -1751,9 +1449,10 @@ def dashboard_overview():
         except Exception as conn_error:
             logger.error(f"Failed to get database connection: {conn_error}")
             # Return with defaults if connection fails
-            return render_template_string(
-                HOME_TEMPLATE,
-                total_replied=0,
+            return render_admin(
+            "Overview",
+            "overview",
+            render_template_string(OVERVIEW_BODY, total_replied=0,
                 total_tweets_posted=0,
                 total_quote_retweets=0,
                 pending_drafts=0,
@@ -1763,8 +1462,8 @@ def dashboard_overview():
                 has_twitter=has_twitter,
                 twitter_status=twitter_status,
                 twitter_message=twitter_message,
-                gemini_status=gemini_status,
-            )
+                gemini_status=gemini_status,),
+        )
         
         # Tables are created by Database class, no need to create here
         
@@ -1900,9 +1599,10 @@ def dashboard_overview():
         pending_drafts = 0
         blocked_today = 0
 
-    return render_template_string(
-        HOME_TEMPLATE,
-        total_replied=total_replied,
+    return render_admin(
+            "Overview",
+            "overview",
+            render_template_string(OVERVIEW_BODY, total_replied=total_replied,
         total_tweets_posted=total_tweets_posted,
         total_quote_retweets=total_quote_retweets,
         pending_drafts=pending_drafts,
@@ -1912,8 +1612,8 @@ def dashboard_overview():
         has_twitter=has_twitter,
         twitter_status=twitter_status,
         twitter_message=twitter_message,
-        gemini_status=gemini_status,
-    )
+        gemini_status=gemini_status,),
+        )
 
 
 @app.route("/settings/credentials", methods=["GET", "POST"])
@@ -2447,52 +2147,8 @@ def settings_automation():
     )
 
 
-RECORDS_SHELL = """
-<!doctype html>
-<html lang="en">
-  <head>
-    <meta charset="utf-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>{{ page_title }} - X Bot</title>
-    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
-    <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.css" rel="stylesheet">
-    <link href="{{ url_for('static', filename='style.css') }}" rel="stylesheet">
-  </head>
-  <body>
-    <div class="d-flex">
-      <nav class="sidebar bg-dark text-white p-3">
-        <h5 class="mb-4">X Bot</h5>
-        <ul class="nav nav-pills flex-column mb-auto">
-          <li><a href="{{ url_for('dashboard_overview') }}" class="nav-link text-white">Overview</a></li>
-          <li><a href="{{ url_for('settings_keywords') }}" class="nav-link text-white">Keywords & Filters</a></li>
-          <li><a href="{{ url_for('settings_credentials') }}" class="nav-link text-white">Credentials</a></li>
-          <li><a href="{{ url_for('settings_automation') }}" class="nav-link text-white">Automation</a></li>
-          <li><a href="{{ url_for('settings_logs') }}" class="nav-link text-white">Logs</a></li>
-          <li><a href="{{ url_for('records_drafts') }}" class="nav-link text-white {% if active=='drafts' %}active{% endif %}">Drafts</a></li>
-          <li><a href="{{ url_for('records_agent') }}" class="nav-link text-white {% if active=='agent' %}active{% endif %}">Agent</a></li>
-          <li><a href="{{ url_for('records_replies') }}" class="nav-link text-white {% if active=='replies' %}active{% endif %}">Records</a></li>
-          <li><a href="{{ url_for('settings_ai') }}" class="nav-link text-white {% if active=='ai' %}active{% endif %}">AI Settings</a></li>
-          <li><a href="{{ url_for('settings_media') }}" class="nav-link text-white {% if active=='media' %}active{% endif %}">Media</a></li>
-          <li><a href="{{ url_for('settings_safety') }}" class="nav-link text-white {% if active=='safety' %}active{% endif %}">Safety</a></li>
-        </ul>
-        <div class="mt-auto pt-3 border-top">
-          <a href="{{ url_for('logout') }}" class="btn btn-outline-light btn-sm w-100">Logout</a>
-        </div>
-      </nav>
-      <main class="flex-grow-1 p-4">
-        {% with messages = get_flashed_messages(with_categories=true) %}
-          {% if messages %}
-            {% for category, message in messages %}
-              <div class="alert alert-{{ category }}">{{ message }}</div>
-            {% endfor %}
-          {% endif %}
-        {% endwith %}
-        {{ body|safe }}
-      </main>
-    </div>
-  </body>
-</html>
-"""
+RECORDS_SHELL = ADMIN_SHELL
+
 
 
 @app.route("/records/agent")
@@ -2571,8 +2227,7 @@ def records_agent():
         actions=actions,
         enabled=enabled,
     )
-    return render_template_string(
-        RECORDS_SHELL, page_title="Agent", active="agent", body=body
+    return render_admin("Agent", "agent", body
     )
 
 
@@ -2706,8 +2361,7 @@ def records_drafts():
         library=library,
         status=status,
     )
-    return render_template_string(
-        RECORDS_SHELL, page_title="Drafts", active="drafts", body=body
+    return render_admin("Drafts", "drafts", body
     )
 
 
@@ -2786,8 +2440,7 @@ def settings_media():
         """,
         assets=assets,
     )
-    return render_template_string(
-        RECORDS_SHELL, page_title="Media", active="media", body=body
+    return render_admin("Media", "media", body
     )
 
 
@@ -2845,8 +2498,7 @@ def records_replies():
         threads=threads,
         quotes=quotes,
     )
-    return render_template_string(
-        RECORDS_SHELL, page_title="Records", active="replies", body=body
+    return render_admin("Records", "replies", body
     )
 
 
@@ -2877,8 +2529,7 @@ def records_tweets():
         tweets=tweets,
         threads=threads,
     )
-    return render_template_string(
-        RECORDS_SHELL, page_title="Tweets", active="replies", body=body
+    return render_admin("Tweets", "replies", body
     )
 
 
@@ -2902,8 +2553,7 @@ def records_quotes():
         """,
         rows=rows,
     )
-    return render_template_string(
-        RECORDS_SHELL, page_title="Quotes", active="replies", body=body
+    return render_admin("Quotes", "replies", body
     )
 
 
@@ -3048,8 +2698,7 @@ def settings_ai():
         ai=ai,
         niche_names=niche_names,
     )
-    return render_template_string(
-        RECORDS_SHELL, page_title="AI Settings", active="ai", body=body
+    return render_admin("AI Settings", "ai", body
     )
 
 
@@ -3165,8 +2814,7 @@ def settings_safety():
         blocked_today=blocked_today,
         phrases="\n".join(safety.get("custom_block_phrases") or []),
     )
-    return render_template_string(
-        RECORDS_SHELL, page_title="Safety", active="safety", body=body
+    return render_admin("Safety", "safety", body
     )
 
 
