@@ -187,9 +187,9 @@ def resolve_provider_config(
     temperature = float(config.get("temperature", 0.7))
 
     preferred = (
-        os.getenv("AI_PROVIDER")
-        or config.get("provider")
+        config.get("provider")
         or (config.get("ai") or {}).get("provider")
+        or os.getenv("AI_PROVIDER")
     )
 
     if db is not None:

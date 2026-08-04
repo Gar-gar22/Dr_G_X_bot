@@ -11,6 +11,8 @@ X search/post APIs are **tools**. Safe writes can auto-post; risky ones need App
 
 Sessions are keyed by `chat_id`: Telegram uses the numeric chat id; the dashboard uses `dashboard` (isolated history). Both share the same agent tools and MITL drafts.
 
+**Provider switching:** Choose the default provider under **Credentials** or **AI Settings** (saved to DB). That choice drives the agent — Render’s `AI_PROVIDER` env only seeds the default when no provider is stored yet. Put a real key for each provider you want to test (`OPENAI_API_KEY`, `AGENTROUTER_API_KEY`, `GEMINI_API_KEY`, `ANTHROPIC_API_KEY`).
+
 ## Enable
 
 Set on Render / `.env`:

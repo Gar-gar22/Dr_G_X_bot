@@ -20,17 +20,33 @@ logger = logging.getLogger(__name__)
 
 
 def _chat_model():
-    """Build a chat model; prefer OpenAI/AgentRouter for tool-calling."""
-    provider = (os.getenv("AI_PROVIDER") or "openai").strip().lower()
-    api_key = None
-    model_name = None
-
+    """Build a chat model from dashboard/DB provider (not stuck on env AI_PROVIDER)."""
+    cfg = None
+    cfg_dict: Dict[str, Any] = {}
     try:
         from ..config import Config
 
         cfg = Config()
+        cfg_dict = cfg.config or {}
     except Exception:
-        cfg = None
+        pass
+
+    provider = (
+        (cfg_dict.get("ai") or {}).get("provider")
+        or os.getenv("AI_PROVIDER")
+        or "openai"
+    ).strip().lower()
+
+    def _openai_key() -> Optional[str]:
+        return os.getenv("OPENAI_API_KEY") or (cfg_dict.get("openai") or {}).get("api_key")
+
+    def _anthropic_key() -> Optional[str]:
+        return os.getenv("ANTHROPIC_API_KEY") or (cfg_dict.get("anthropic") or {}).get(
+            "api_key"
+        )
+
+    def _gemini_key() -> Optional[str]:
+        return os.getenv("GEMINI_API_KEY") or (cfg_dict.get("gemini") or {}).get("api_key")
 
     if provider in ("agentrouter", "agent_router"):
         from ..ai_provider import (
@@ -38,8 +54,8 @@ def _chat_model():
             agentrouter_api_key,
             agentrouter_base_url,
         )
+        from langchain_openai import ChatOpenAI
 
-        cfg_dict = cfg.config if cfg else {}
         api_key = agentrouter_api_key(cfg_dict)
         model_name = (
             os.getenv("AGENTROUTER_MODEL")
@@ -48,10 +64,8 @@ def _chat_model():
         )
         if not api_key:
             raise RuntimeError(
-                "AGENTROUTER_API_KEY (or AGENT_ROUTER_TOKEN) required when AI_PROVIDER=agentrouter"
+                "AgentRouter selected but no AGENTROUTER_API_KEY / dashboard key set"
             )
-        from langchain_openai import ChatOpenAI
-
         return ChatOpenAI(
             model=model_name,
             api_key=api_key,
@@ -59,63 +73,51 @@ def _chat_model():
             temperature=0.4,
         )
 
-    if provider == "openai" or not provider:
-        api_key = os.getenv("OPENAI_API_KEY")
-        if cfg:
-            api_key = api_key or (cfg.config.get("openai") or {}).get("api_key")
-            model_name = (cfg.config.get("openai") or {}).get("model")
-        model_name = model_name or os.getenv("OPENAI_MODEL") or "gpt-4o-mini"
-        if not api_key:
-            raise RuntimeError("OPENAI_API_KEY required for agent tool-calling")
+    if provider == "openai":
         from langchain_openai import ChatOpenAI
 
+        api_key = _openai_key()
+        model_name = (
+            (cfg_dict.get("openai") or {}).get("model")
+            or os.getenv("OPENAI_MODEL")
+            or "gpt-4o-mini"
+        )
+        if not api_key:
+            raise RuntimeError("OpenAI selected but OPENAI_API_KEY is missing")
         return ChatOpenAI(model=model_name, api_key=api_key, temperature=0.4)
 
     if provider == "anthropic":
-        api_key = os.getenv("ANTHROPIC_API_KEY")
-        if cfg:
-            api_key = api_key or (cfg.config.get("anthropic") or {}).get("api_key")
-            model_name = (cfg.config.get("anthropic") or {}).get("model")
-        model_name = model_name or "claude-3-5-haiku-latest"
-        if not api_key:
-            raise RuntimeError("ANTHROPIC_API_KEY required")
         from langchain_anthropic import ChatAnthropic
 
+        api_key = _anthropic_key()
+        model_name = (
+            (cfg_dict.get("anthropic") or {}).get("model")
+            or "claude-3-5-haiku-latest"
+        )
+        if not api_key:
+            raise RuntimeError("Anthropic selected but ANTHROPIC_API_KEY is missing")
         return ChatAnthropic(model=model_name, api_key=api_key, temperature=0.4)
 
-    # Gemini via OpenAI-compatible path is awkward; fall back to OpenAI / AgentRouter if present
-    if os.getenv("OPENAI_API_KEY"):
-        from langchain_openai import ChatOpenAI
-
-        return ChatOpenAI(
-            model=os.getenv("OPENAI_MODEL") or "gpt-4o-mini",
-            api_key=os.getenv("OPENAI_API_KEY"),
-            temperature=0.4,
-        )
-    ar_fallback = os.getenv("AGENTROUTER_API_KEY") or os.getenv("AGENT_ROUTER_TOKEN")
-    if ar_fallback:
-        from ..ai_provider import AGENTROUTER_DEFAULT_MODEL, agentrouter_base_url
-        from langchain_openai import ChatOpenAI
-
-        return ChatOpenAI(
-            model=os.getenv("AGENTROUTER_MODEL") or AGENTROUTER_DEFAULT_MODEL,
-            api_key=ar_fallback,
-            base_url=agentrouter_base_url(cfg.config if cfg else {}),
-            temperature=0.4,
-        )
-    try:
+    if provider == "gemini":
+        api_key = _gemini_key()
+        if not api_key:
+            raise RuntimeError("Gemini selected but GEMINI_API_KEY is missing")
         from langchain_google_genai import ChatGoogleGenerativeAI
 
+        model_name = (
+            (cfg_dict.get("gemini") or {}).get("model")
+            or os.getenv("GEMINI_MODEL")
+            or "gemini-1.5-flash"
+        )
         return ChatGoogleGenerativeAI(
-            model=os.getenv("GEMINI_MODEL") or "gemini-1.5-flash",
-            google_api_key=os.getenv("GEMINI_API_KEY"),
+            model=model_name,
+            google_api_key=api_key,
             temperature=0.4,
         )
-    except Exception as e:
-        raise RuntimeError(
-            "Agent needs OpenAI, AgentRouter, Anthropic, or Gemini LangChain bindings: "
-            f"{e}"
-        )
+
+    raise RuntimeError(
+        f"Unknown AI provider '{provider}'. Choose openai, agentrouter, anthropic, or gemini."
+    )
 
 
 def _last_ai_text(messages: List[Any]) -> str:

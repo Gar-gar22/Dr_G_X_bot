@@ -240,7 +240,9 @@ class Config:
             self.config["agentrouter"]["model"] = os.getenv("AGENTROUTER_MODEL")
 
         self.config.setdefault("ai", {})
-        if os.getenv("AI_PROVIDER"):
+        # AI_PROVIDER only seeds when no provider was chosen yet (file/DB/dashboard).
+        # Otherwise env permanently overrides dashboard switches (e.g. stuck on openai).
+        if os.getenv("AI_PROVIDER") and not (self.config.get("ai") or {}).get("provider"):
             self.config["ai"]["provider"] = os.getenv("AI_PROVIDER")
         if os.getenv("AI_PROMPT_PROFILE"):
             self.config["ai"]["prompt_profile"] = os.getenv("AI_PROMPT_PROFILE")
