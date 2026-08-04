@@ -7,7 +7,13 @@ from typing import Any, Dict, Optional, Tuple
 logger = logging.getLogger(__name__)
 
 AGENTROUTER_DEFAULT_BASE_URL = "https://agentrouter.org/v1"
-AGENTROUTER_DEFAULT_MODEL = "gpt-4o-mini"
+# AgentRouter gateway only allows these model ids for this project.
+AGENTROUTER_ALLOWED_MODELS = (
+    "gpt-5.6-sol",
+    "claude-opus-4-8",
+    "claude-opus-5",
+)
+AGENTROUTER_DEFAULT_MODEL = "gpt-5.6-sol"
 GEMINI_DEFAULT_MODEL = "gemini-2.5-flash"
 # Retired / renamed Gemini model ids → current flash/pro
 _GEMINI_MODEL_ALIASES = {
@@ -25,6 +31,14 @@ _GEMINI_MODEL_ALIASES = {
 def normalize_gemini_model(model: Optional[str]) -> str:
     name = (model or "").strip() or GEMINI_DEFAULT_MODEL
     return _GEMINI_MODEL_ALIASES.get(name, name)
+
+
+def normalize_agentrouter_model(model: Optional[str]) -> str:
+    """Force AgentRouter model to one of the allowed gateway ids."""
+    name = (model or "").strip()
+    if name in AGENTROUTER_ALLOWED_MODELS:
+        return name
+    return AGENTROUTER_DEFAULT_MODEL
 
 
 def agentrouter_api_key(config: Optional[Dict[str, Any]] = None) -> Optional[str]:
@@ -234,10 +248,9 @@ def resolve_provider_config(
     anthropic_key = os.getenv("ANTHROPIC_API_KEY") or (config.get("anthropic") or {}).get("api_key")
     gemini_key = os.getenv("GEMINI_API_KEY") or (config.get("gemini") or {}).get("api_key")
     ar_key = agentrouter_api_key(config)
-    ar_model = (
+    ar_model = normalize_agentrouter_model(
         os.getenv("AGENTROUTER_MODEL")
         or (config.get("agentrouter") or {}).get("model")
-        or AGENTROUTER_DEFAULT_MODEL
     )
 
     # Auto-enable gemini if key present
@@ -323,7 +336,9 @@ def generate_with_resolved_provider(
         text = provider.generate(
             system,
             user,
-            model=normalize_gemini_model(model) if name == "gemini" else (model or ""),
+            model=normalize_gemini_model(model) if name == "gemini" else (
+                normalize_agentrouter_model(model) if name in ("agentrouter", "agent_router") else (model or "")
+            ),
             temperature=temperature,
             max_tokens=max_tokens,
         )

@@ -1056,6 +1056,15 @@ CREDENTIALS_BODY = """
               <label class="form-label">AgentRouter base URL</label>
               <input type="text" name="agentrouter_base_url" class="form-control" value="{{ agentrouter.get('base_url') or 'https://agentrouter.org/v1' }}" placeholder="https://agentrouter.org/v1">
             </div>
+            <div class="col-md-6">
+              <label class="form-label">AgentRouter model</label>
+              <select name="agentrouter_model" class="form-select">
+                {% for m in agentrouter_models %}
+                <option value="{{ m }}" {% if (agentrouter.get('model') or 'gpt-5.6-sol') == m %}selected{% endif %}>{{ m }}</option>
+                {% endfor %}
+              </select>
+              <small class="text-muted">Only these models are available on your AgentRouter plan.</small>
+            </div>
             <div class="col-md-4">
               <label class="form-label">Default AI Provider</label>
               <select name="ai_provider" class="form-select">
@@ -1490,6 +1499,11 @@ def settings_credentials():
         ar_base = request.form.get("agentrouter_base_url", "").strip()
         if ar_base:
             data["agentrouter"]["base_url"] = ar_base.rstrip("/")
+        from src.ai_provider import normalize_agentrouter_model
+
+        data["agentrouter"]["model"] = normalize_agentrouter_model(
+            request.form.get("agentrouter_model")
+        )
 
         Path(config.config_path).write_text(
             json.dumps(data, indent=2), encoding="utf-8"
@@ -1527,7 +1541,8 @@ def settings_credentials():
     anthropic = config.config.get("anthropic", {}) if config else {}
     agentrouter = config.config.get("agentrouter", {}) if config else {}
     ai = config.config.get("ai", {}) if config else {}
-    
+    from src.ai_provider import AGENTROUTER_ALLOWED_MODELS
+
     # Check if Twitter is connected
     is_connected = False
     connected_user = None
@@ -1548,6 +1563,7 @@ def settings_credentials():
         openai=openai_cfg,
         anthropic=anthropic,
         agentrouter=agentrouter,
+        agentrouter_models=list(AGENTROUTER_ALLOWED_MODELS),
         ai=ai,
         is_connected=is_connected,
         connected_user=connected_user,
@@ -2619,16 +2635,28 @@ def settings_ai():
             data["ai"]["temperature"] = float(request.form.get("temperature", 0.7))
             Path(config.config_path).write_text(json.dumps(data, indent=2), encoding="utf-8")
             # Mark default provider in DB
+            from src.ai_provider import normalize_agentrouter_model
+
             for p in db.list_ai_providers():
+                model_val = request.form.get(f"model_{p['provider']}") or p.get("model")
+                if p["provider"] == "agentrouter":
+                    model_val = normalize_agentrouter_model(model_val)
                 db.save_ai_provider(
                     {
                         "provider": p["provider"],
                         "api_key": None,
-                        "model": request.form.get(f"model_{p['provider']}") or p.get("model"),
+                        "model": model_val,
                         "enabled": p.get("enabled"),
                         "is_default": p["provider"] == data["ai"]["provider"],
                     }
                 )
+            # Keep config.json agentrouter.model in sync
+            if data["ai"]["provider"] == "agentrouter" or request.form.get("model_agentrouter"):
+                data.setdefault("agentrouter", {})
+                data["agentrouter"]["model"] = normalize_agentrouter_model(
+                    request.form.get("model_agentrouter")
+                )
+                Path(config.config_path).write_text(json.dumps(data, indent=2), encoding="utf-8")
             flash("AI defaults saved.", "success")
         elif action == "save_profile":
             profile_id = request.form.get("profile_id")
@@ -2652,6 +2680,8 @@ def settings_ai():
     providers = db.list_ai_providers()
     ai = config.config.get("ai", {})
     niche_names = sorted({p["name"] for p in profiles})
+    from src.ai_provider import AGENTROUTER_ALLOWED_MODELS
+
     body = render_template_string(
         """
         <h2>AI Settings</h2>
@@ -2682,7 +2712,15 @@ def settings_ai():
             {% for p in providers %}
             <div class="col-md-4">
               <label class="form-label">{{ p.provider }} model</label>
+              {% if p.provider == 'agentrouter' %}
+              <select name="model_agentrouter" class="form-select">
+                {% for m in agentrouter_models %}
+                <option value="{{ m }}" {% if (p.model or 'gpt-5.6-sol') == m %}selected{% endif %}>{{ m }}</option>
+                {% endfor %}
+              </select>
+              {% else %}
               <input name="model_{{ p.provider }}" class="form-control" value="{{ p.model or '' }}">
+              {% endif %}
             </div>
             {% endfor %}
           </div>
@@ -2743,6 +2781,7 @@ def settings_ai():
         providers=providers,
         ai=ai,
         niche_names=niche_names,
+        agentrouter_models=list(AGENTROUTER_ALLOWED_MODELS),
     )
     return render_admin("AI Settings", "ai", body
     )

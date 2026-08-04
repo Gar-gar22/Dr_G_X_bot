@@ -21,7 +21,8 @@ Set on Render / `.env`:
 AGENT_ENABLED=true
 AI_PROVIDER=agentrouter
 AGENTROUTER_API_KEY=sk-...
-# Optional: AGENTROUTER_MODEL=gpt-4o-mini
+# Allowed models: gpt-5.6-sol | claude-opus-4-8 | claude-opus-5
+# AGENTROUTER_MODEL=gpt-5.6-sol
 # Optional: AGENTROUTER_BASE_URL=https://agentrouter.org/v1
 # Or use direct OpenAI instead:
 # AI_PROVIDER=openai
@@ -34,6 +35,8 @@ MITL_ENABLED=true
 ```
 
 **AgentRouter** ([agentrouter.org](https://agentrouter.org)) is an OpenAI-compatible gateway (`https://agentrouter.org/v1`). Create a token at https://agentrouter.org/console/token, then set `AI_PROVIDER=agentrouter` and `AGENTROUTER_API_KEY` (alias: `AGENT_ROUTER_TOKEN`).
+
+Allowed AgentRouter models for this bot: `gpt-5.6-sol` (default), `claude-opus-4-8`, `claude-opus-5`. Pick one under Credentials / AI Settings.
 
 OpenAI or AgentRouter are recommended for tool-calling. Anthropic / Gemini work via LangChain when configured.
 

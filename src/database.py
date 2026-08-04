@@ -545,7 +545,7 @@ class Database:
                 ("gemini", "gemini-2.5-flash", True),
                 ("openai", "gpt-4o-mini", False),
                 ("anthropic", "claude-3-5-haiku-latest", False),
-                ("agentrouter", "gpt-4o-mini", False),
+                ("agentrouter", "gpt-5.6-sol", False),
             ]:
                 cursor.execute(
                     """
@@ -568,7 +568,25 @@ class Database:
                         (provider, api_key, model, enabled, is_default)
                     VALUES (%s, NULL, %s, FALSE, FALSE)
                     """,
-                    ("agentrouter", "gpt-4o-mini"),
+                    ("agentrouter", "gpt-5.6-sol"),
+                )
+            else:
+                # Migrate to AgentRouter-allowed model ids
+                cursor.execute(
+                    """
+                    UPDATE ai_provider_settings
+                    SET model = 'gpt-5.6-sol'
+                    WHERE provider = 'agentrouter'
+                      AND (
+                        model IS NULL
+                        OR model = ''
+                        OR model NOT IN (
+                          'gpt-5.6-sol',
+                          'claude-opus-4-8',
+                          'claude-opus-5'
+                        )
+                      )
+                    """
                 )
             # Migrate retired Gemini model ids stored in settings
             cursor.execute(

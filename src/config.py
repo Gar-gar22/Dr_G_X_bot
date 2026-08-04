@@ -31,7 +31,7 @@ class Config:
             "agentrouter": {
                 "enabled": False,
                 "base_url": "https://agentrouter.org/v1",
-                "model": "gpt-4o-mini",
+                "model": "gpt-5.6-sol",
             },
             "ai": {
                 "provider": os.getenv("AI_PROVIDER", "gemini"),

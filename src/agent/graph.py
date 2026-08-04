@@ -53,11 +53,12 @@ def _chat_model():
             AGENTROUTER_DEFAULT_MODEL,
             agentrouter_api_key,
             agentrouter_base_url,
+            normalize_agentrouter_model,
         )
         from langchain_openai import ChatOpenAI
 
         api_key = agentrouter_api_key(cfg_dict)
-        model_name = (
+        model_name = normalize_agentrouter_model(
             os.getenv("AGENTROUTER_MODEL")
             or (cfg_dict.get("agentrouter") or {}).get("model")
             or AGENTROUTER_DEFAULT_MODEL
