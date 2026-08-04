@@ -99,5 +99,6 @@ When `AGENT_ENABLED=false`, classic photo+tip compose and batch MITL still work.
 | “AGENT_ENABLED is false” | Set env and redeploy |
 | Agent error `model_dump` / AgentRouter | Almost always means base URL is `https://agentrouter.org` **without** `/v1`, or `OPENAI_BASE_URL` points there. Set `https://agentrouter.org/v1` (Credentials + env). Redeploy latest. |
 | AgentRouter `unauthorized client` / 401 | Redeploy latest build (Codex client headers). Confirm `AGENTROUTER_API_KEY` is a real AgentRouter token, not an OpenAI key. |
+| AgentRouter WAF HTML / `aliyun_waf` | AgentRouter's edge blocked the **server IP** (common on Render). Switch provider (Gemini/OpenAI), ask AgentRouter to allowlist egress, or proxy. |
 | No posts, only drafts | Action was risky — Approve in Telegram/Drafts |
 | Conflict getUpdates | Only one web service; see TELEGRAM_SETUP.md |
