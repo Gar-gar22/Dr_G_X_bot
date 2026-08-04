@@ -545,6 +545,7 @@ class Database:
                 ("gemini", "gemini-1.5-flash", True),
                 ("openai", "gpt-4o-mini", False),
                 ("anthropic", "claude-3-5-haiku-latest", False),
+                ("agentrouter", "gpt-4o-mini", False),
             ]:
                 cursor.execute(
                     """
@@ -553,6 +554,21 @@ class Database:
                     VALUES (%s, NULL, %s, FALSE, %s)
                     """,
                     (provider, model, is_default),
+                )
+        else:
+            # Ensure AgentRouter row exists on upgrades
+            cursor.execute(
+                "SELECT 1 FROM ai_provider_settings WHERE provider = %s",
+                ("agentrouter",),
+            )
+            if not cursor.fetchone():
+                cursor.execute(
+                    """
+                    INSERT INTO ai_provider_settings
+                        (provider, api_key, model, enabled, is_default)
+                    VALUES (%s, NULL, %s, FALSE, FALSE)
+                    """,
+                    ("agentrouter", "gpt-4o-mini"),
                 )
     
     def _row_to_dict(self, row: Dict[str, Any]) -> Dict[str, Any]:

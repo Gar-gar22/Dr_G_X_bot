@@ -20,7 +20,7 @@ logger = logging.getLogger(__name__)
 
 
 def _chat_model():
-    """Build a chat model; prefer OpenAI tool-calling when AI_PROVIDER=openai."""
+    """Build a chat model; prefer OpenAI/AgentRouter for tool-calling."""
     provider = (os.getenv("AI_PROVIDER") or "openai").strip().lower()
     api_key = None
     model_name = None
@@ -29,11 +29,35 @@ def _chat_model():
         from ..config import Config
 
         cfg = Config()
-        from ..ai_provider import resolve_provider
-
-        # resolve may not exist — fallback
     except Exception:
         cfg = None
+
+    if provider in ("agentrouter", "agent_router"):
+        from ..ai_provider import (
+            AGENTROUTER_DEFAULT_MODEL,
+            agentrouter_api_key,
+            agentrouter_base_url,
+        )
+
+        cfg_dict = cfg.config if cfg else {}
+        api_key = agentrouter_api_key(cfg_dict)
+        model_name = (
+            os.getenv("AGENTROUTER_MODEL")
+            or (cfg_dict.get("agentrouter") or {}).get("model")
+            or AGENTROUTER_DEFAULT_MODEL
+        )
+        if not api_key:
+            raise RuntimeError(
+                "AGENTROUTER_API_KEY (or AGENT_ROUTER_TOKEN) required when AI_PROVIDER=agentrouter"
+            )
+        from langchain_openai import ChatOpenAI
+
+        return ChatOpenAI(
+            model=model_name,
+            api_key=api_key,
+            base_url=agentrouter_base_url(cfg_dict),
+            temperature=0.4,
+        )
 
     if provider == "openai" or not provider:
         api_key = os.getenv("OPENAI_API_KEY")
@@ -59,14 +83,24 @@ def _chat_model():
 
         return ChatAnthropic(model=model_name, api_key=api_key, temperature=0.4)
 
-    # Gemini via OpenAI-compatible path is awkward; fall back to OpenAI if present
-    api_key = os.getenv("OPENAI_API_KEY") or os.getenv("GEMINI_API_KEY")
+    # Gemini via OpenAI-compatible path is awkward; fall back to OpenAI / AgentRouter if present
     if os.getenv("OPENAI_API_KEY"):
         from langchain_openai import ChatOpenAI
 
         return ChatOpenAI(
             model=os.getenv("OPENAI_MODEL") or "gpt-4o-mini",
             api_key=os.getenv("OPENAI_API_KEY"),
+            temperature=0.4,
+        )
+    ar_fallback = os.getenv("AGENTROUTER_API_KEY") or os.getenv("AGENT_ROUTER_TOKEN")
+    if ar_fallback:
+        from ..ai_provider import AGENTROUTER_DEFAULT_MODEL, agentrouter_base_url
+        from langchain_openai import ChatOpenAI
+
+        return ChatOpenAI(
+            model=os.getenv("AGENTROUTER_MODEL") or AGENTROUTER_DEFAULT_MODEL,
+            api_key=ar_fallback,
+            base_url=agentrouter_base_url(cfg.config if cfg else {}),
             temperature=0.4,
         )
     try:
@@ -79,7 +113,8 @@ def _chat_model():
         )
     except Exception as e:
         raise RuntimeError(
-            f"Agent needs OpenAI (recommended) or Anthropic/Gemini LangChain bindings: {e}"
+            "Agent needs OpenAI, AgentRouter, Anthropic, or Gemini LangChain bindings: "
+            f"{e}"
         )
 
 

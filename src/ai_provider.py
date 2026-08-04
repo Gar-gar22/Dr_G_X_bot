@@ -1,10 +1,33 @@
-"""Multi-provider AI generation (Gemini, OpenAI, Anthropic)."""
+"""Multi-provider AI generation (Gemini, OpenAI, Anthropic, AgentRouter)."""
 import logging
 import os
 from abc import ABC, abstractmethod
 from typing import Any, Dict, Optional, Tuple
 
 logger = logging.getLogger(__name__)
+
+AGENTROUTER_DEFAULT_BASE_URL = "https://agentrouter.org/v1"
+AGENTROUTER_DEFAULT_MODEL = "gpt-4o-mini"
+
+
+def agentrouter_api_key(config: Optional[Dict[str, Any]] = None) -> Optional[str]:
+    """Resolve AgentRouter token from env or config."""
+    config = config or {}
+    return (
+        os.getenv("AGENTROUTER_API_KEY")
+        or os.getenv("AGENT_ROUTER_TOKEN")
+        or (config.get("agentrouter") or {}).get("api_key")
+        or None
+    )
+
+
+def agentrouter_base_url(config: Optional[Dict[str, Any]] = None) -> str:
+    config = config or {}
+    return (
+        os.getenv("AGENTROUTER_BASE_URL")
+        or (config.get("agentrouter") or {}).get("base_url")
+        or AGENTROUTER_DEFAULT_BASE_URL
+    ).rstrip("/")
 
 
 class AIProvider(ABC):
@@ -66,10 +89,15 @@ class GeminiProvider(AIProvider):
 class OpenAIProvider(AIProvider):
     name = "openai"
 
-    def __init__(self, api_key: str):
+    def __init__(self, api_key: str, base_url: Optional[str] = None, name: Optional[str] = None):
         from openai import OpenAI
 
-        self.client = OpenAI(api_key=api_key)
+        if name:
+            self.name = name
+        kwargs: Dict[str, Any] = {"api_key": api_key}
+        if base_url:
+            kwargs["base_url"] = base_url.rstrip("/")
+        self.client = OpenAI(**kwargs)
 
     def generate(
         self,
@@ -90,6 +118,19 @@ class OpenAIProvider(AIProvider):
             ],
         )
         return (response.choices[0].message.content or "").strip()
+
+
+class AgentRouterProvider(OpenAIProvider):
+    """OpenAI-compatible gateway at https://agentrouter.org/v1."""
+
+    name = "agentrouter"
+
+    def __init__(self, api_key: str, base_url: Optional[str] = None):
+        super().__init__(
+            api_key,
+            base_url=base_url or agentrouter_base_url(),
+            name="agentrouter",
+        )
 
 
 class AnthropicProvider(AIProvider):
@@ -177,6 +218,12 @@ def resolve_provider_config(
     openai_key = os.getenv("OPENAI_API_KEY") or (config.get("openai") or {}).get("api_key")
     anthropic_key = os.getenv("ANTHROPIC_API_KEY") or (config.get("anthropic") or {}).get("api_key")
     gemini_key = os.getenv("GEMINI_API_KEY") or (config.get("gemini") or {}).get("api_key")
+    ar_key = agentrouter_api_key(config)
+    ar_model = (
+        os.getenv("AGENTROUTER_MODEL")
+        or (config.get("agentrouter") or {}).get("model")
+        or AGENTROUTER_DEFAULT_MODEL
+    )
 
     # Auto-enable gemini if key present
     gemini_enabled = (config.get("gemini") or {}).get("enabled")
@@ -187,6 +234,8 @@ def resolve_provider_config(
         gemini_enabled = True
 
     name = (preferred or "").lower()
+    if name in ("agentrouter", "agent_router") and ar_key:
+        return "agentrouter", ar_key, ar_model, temperature
     if name == "openai" and openai_key:
         return "openai", openai_key, (config.get("openai") or {}).get("model", "gpt-4o-mini"), temperature
     if name == "anthropic" and anthropic_key:
@@ -199,6 +248,8 @@ def resolve_provider_config(
     if name == "gemini" and gemini_key:
         return "gemini", gemini_key, (config.get("gemini") or {}).get("model", "gemini-1.5-flash"), temperature
 
+    if ar_key and (config.get("agentrouter") or {}).get("enabled", bool(ar_key)):
+        return "agentrouter", ar_key, ar_model, temperature
     if openai_key and (config.get("openai") or {}).get("enabled", bool(openai_key)):
         return "openai", openai_key, (config.get("openai") or {}).get("model", "gpt-4o-mini"), temperature
     if anthropic_key and (config.get("anthropic") or {}).get("enabled", bool(anthropic_key)):
@@ -217,6 +268,8 @@ def resolve_provider_config(
 def build_provider(
     provider_name: str,
     api_key: str,
+    *,
+    config: Optional[Dict[str, Any]] = None,
 ) -> Optional[AIProvider]:
     """Instantiate a provider by name."""
     try:
@@ -224,6 +277,8 @@ def build_provider(
             return GeminiProvider(api_key)
         if provider_name == "openai":
             return OpenAIProvider(api_key)
+        if provider_name in ("agentrouter", "agent_router"):
+            return AgentRouterProvider(api_key, base_url=agentrouter_base_url(config))
         if provider_name == "anthropic":
             return AnthropicProvider(api_key)
     except Exception as e:
@@ -246,7 +301,7 @@ def generate_with_resolved_provider(
     name, api_key, model, temperature = resolve_provider_config(db=db, config=config)
     if not name or not api_key:
         return None, None, None
-    provider = build_provider(name, api_key)
+    provider = build_provider(name, api_key, config=config)
     if not provider:
         return None, None, None
     try:

@@ -9,9 +9,13 @@ Set on Render / `.env`:
 
 ```env
 AGENT_ENABLED=true
-AI_PROVIDER=openai
-OPENAI_API_KEY=sk-...
-# Optional:
+AI_PROVIDER=agentrouter
+AGENTROUTER_API_KEY=sk-...
+# Optional: AGENTROUTER_MODEL=gpt-4o-mini
+# Optional: AGENTROUTER_BASE_URL=https://agentrouter.org/v1
+# Or use direct OpenAI instead:
+# AI_PROVIDER=openai
+# OPENAI_API_KEY=sk-...
 # AGENT_DRY_RUN=true          # force all writes to Approve
 # AGENT_MAX_TOOL_STEPS=8
 TELEGRAM_BOT_TOKEN=...
@@ -19,7 +23,9 @@ TELEGRAM_CHAT_ID=...
 MITL_ENABLED=true
 ```
 
-OpenAI is recommended for tool-calling. Anthropic / Gemini work via LangChain when configured; orchestrator prefers OpenAI when `AI_PROVIDER=openai`.
+**AgentRouter** ([agentrouter.org](https://agentrouter.org)) is an OpenAI-compatible gateway (`https://agentrouter.org/v1`). Create a token at https://agentrouter.org/console/token, then set `AI_PROVIDER=agentrouter` and `AGENTROUTER_API_KEY` (alias: `AGENT_ROUTER_TOKEN`).
+
+OpenAI or AgentRouter are recommended for tool-calling. Anthropic / Gemini work via LangChain when configured.
 
 Keep **one** Gunicorn worker:
 
@@ -69,6 +75,6 @@ When `AGENT_ENABLED=false`, classic photo+tip compose and batch MITL still work.
 | Issue | Fix |
 |-------|-----|
 | “AGENT_ENABLED is false” | Set env and redeploy |
-| Agent error about OpenAI | Set `OPENAI_API_KEY` / `AI_PROVIDER=openai` |
+| Agent error about OpenAI / AgentRouter | Set `OPENAI_API_KEY` or `AGENTROUTER_API_KEY` + `AI_PROVIDER` |
 | No posts, only drafts | Action was risky — Approve in Telegram/Drafts |
 | Conflict getUpdates | Only one web service; see TELEGRAM_SETUP.md |

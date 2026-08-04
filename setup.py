@@ -80,8 +80,10 @@ def setup_config():
     print("Pick a default provider. Others can be added later in the dashboard.")
     print()
 
-    provider = get_input("Default provider (gemini/openai/anthropic)", "gemini").lower()
-    if provider not in ("gemini", "openai", "anthropic"):
+    provider = get_input(
+        "Default provider (gemini/openai/anthropic/agentrouter)", "gemini"
+    ).lower()
+    if provider not in ("gemini", "openai", "anthropic", "agentrouter"):
         provider = "gemini"
 
     config["ai"] = {
@@ -95,6 +97,12 @@ def setup_config():
         "enabled": False,
         "api_key": "",
         "model": "claude-3-5-haiku-latest",
+    }
+    config["agentrouter"] = {
+        "enabled": False,
+        "api_key": "",
+        "model": "gpt-4o-mini",
+        "base_url": "https://agentrouter.org/v1",
     }
 
     use_ai = get_bool_input(f"Enable {provider} now?", default=True)

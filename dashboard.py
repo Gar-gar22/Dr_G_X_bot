@@ -572,106 +572,9 @@ LOGIN_TEMPLATE = """
 </html>
 """
 
-AUTOMATION_TEMPLATE = """
-<!doctype html>
-<html lang="en">
-  <head>
-    <meta charset="utf-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>Automation Settings - X Bot</title>
-    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
-    <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.css" rel="stylesheet">
-    <link href="{{ url_for('static', filename='style.css') }}" rel="stylesheet">
-  </head>
-  <body>
-    <div class="mobile-topbar px-3 py-2 d-md-none">
-      <button class="btn btn-outline-light btn-sm" type="button" onclick="toggleSidebar()">
-        <i class="bi bi-list" id="navToggleIcon"></i>
-      </button>
-      <span class="fw-semibold">X Bot</span>
-    </div>
-    <div class="d-flex">
-      <nav class="sidebar text-white">
-        <div class="brand">
-          <div class="brand-mark">DG</div>
-          <div class="brand-text">
-            <strong>Dr G</strong>
-            <span>Control center</span>
-          </div>
-        </div>
-        <ul class="nav nav-pills flex-column mb-auto">
-          <li class="nav-item">
-            <a href="{{ url_for('dashboard_overview') }}" class="nav-link text-white">
-              <i class="bi bi-speedometer2 me-2"></i> Overview
-            </a>
-          </li>
-          <li>
-            <a href="{{ url_for('settings_keywords') }}" class="nav-link text-white">
-              <i class="bi bi-filter-circle me-2"></i> Keywords & Filters
-            </a>
-          </li>
-          <li>
-            <a href="{{ url_for('settings_credentials') }}" class="nav-link text-white">
-              <i class="bi bi-person-badge me-2"></i> Credentials
-            </a>
-          </li>
-          <li>
-            <a href="{{ url_for('settings_automation') }}" class="nav-link text-white active">
-              <i class="bi bi-gear me-2"></i> Automation
-            </a>
-          </li>
-          <li>
-            <a href="{{ url_for('settings_logs') }}" class="nav-link text-white">
-              <i class="bi bi-journal-text me-2"></i> Logs
-            </a>
-          </li>
-          <li>
-            <a href="{{ url_for('records_drafts') }}" class="nav-link text-white">
-              <i class="bi bi-hourglass-split me-2"></i> Drafts
-            </a>
-          </li>
-          <li>
-            <a href="{{ url_for('records_replies') }}" class="nav-link text-white">
-              <i class="bi bi-chat-left-text me-2"></i> Records
-            </a>
-          </li>
-          <li>
-            <a href="{{ url_for('settings_ai') }}" class="nav-link text-white">
-              <i class="bi bi-robot me-2"></i> AI Settings
-            </a>
-          </li>
-          <li>
-            <a href="{{ url_for('settings_media') }}" class="nav-link text-white">
-              <i class="bi bi-image me-2"></i> Media
-            </a>
-          </li>
-          <li>
-            <a href="{{ url_for('settings_safety') }}" class="nav-link text-white">
-              <i class="bi bi-shield-check me-2"></i> Safety
-            </a>
-          </li>
-        </ul>
-        <div class="mt-auto pt-3 border-top">
-          <div class="small text-muted mb-2">{{ session.get('user_email', 'User') }}</div>
-          <a href="{{ url_for('logout') }}" class="btn btn-outline-light btn-sm w-100">
-            <i class="bi bi-box-arrow-right me-1"></i> Logout
-          </a>
-        </div>
-      </nav>
-      <main class="flex-grow-1 p-4">
-        <div class="page-narrow">
-          {% with messages = get_flashed_messages(with_categories=true) %}
-            {% if messages %}
-              {% for category, message in messages %}
-                <div class="alert alert-{{ category }} alert-dismissible fade show" role="alert">
-                  {{ message }}
-                  <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
-                </div>
-              {% endfor %}
-            {% endif %}
-          {% endwith %}
-
-          <h2 class="mb-4">Automation Settings</h2>
+AUTOMATION_BODY = """
+<div class="page-narrow">
+<h2 class="mb-4">Automation Settings</h2>
 
           {% if config_error %}
             <div class="alert alert-danger">{{ config_error }}</div>
@@ -892,134 +795,17 @@ AUTOMATION_TEMPLATE = """
             </div>
           </div>
         </div>
-      </main>
-    </div>
-    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
-    <script>
-      function toggleSidebar() {
-        var sidebar = document.querySelector('.sidebar');
-        var icon = document.getElementById('navToggleIcon');
-        if (sidebar) {
-          var isOpen = sidebar.classList.toggle('sidebar-open');
-          if (icon) {
-            icon.classList.toggle('bi-list', !isOpen);
-            icon.classList.toggle('bi-x-lg', isOpen);
-          }
-        }
-      }
-      
-      // Auto-refresh status every 30 seconds if bot is running
-      {% if bot_running %}
-      setInterval(function() {
-        location.reload();
-      }, 30000);
-      {% endif %}
-    </script>
-  </body>
-</html>
+
+<script>
+  {% if bot_running %}
+  setInterval(function() { location.reload(); }, 30000);
+  {% endif %}
+</script>
 """
 
-
-KEYWORDS_TEMPLATE = """
-<!doctype html>
-<html lang="en">
-  <head>
-    <meta charset="utf-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>Keywords & Filters - X Bot</title>
-    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
-    <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.css" rel="stylesheet">
-    <link href="{{ url_for('static', filename='style.css') }}" rel="stylesheet">
-  </head>
-  <body>
-    <div class="mobile-topbar px-3 py-2 d-md-none">
-      <button class="btn btn-outline-light btn-sm" type="button" onclick="toggleSidebar()">
-        <i class="bi bi-list"></i>
-      </button>
-      <span class="fw-semibold">X Bot</span>
-    </div>
-    <div class="d-flex">
-      <nav class="sidebar text-white">
-        <div class="brand">
-          <div class="brand-mark">DG</div>
-          <div class="brand-text">
-            <strong>Dr G</strong>
-            <span>Control center</span>
-          </div>
-        </div>
-        <ul class="nav nav-pills flex-column mb-auto">
-          <li class="nav-item">
-            <a href="{{ url_for('dashboard_overview') }}" class="nav-link text-white">
-              <i class="bi bi-speedometer2 me-2"></i> Overview
-            </a>
-          </li>
-          <li>
-            <a href="{{ url_for('settings_keywords') }}" class="nav-link text-white active">
-              <i class="bi bi-filter-circle me-2"></i> Keywords & Filters
-            </a>
-          </li>
-          <li>
-            <a href="{{ url_for('settings_credentials') }}" class="nav-link text-white">
-              <i class="bi bi-person-badge me-2"></i> Credentials
-            </a>
-          </li>
-          <li>
-            <a href="{{ url_for('settings_automation') }}" class="nav-link text-white">
-              <i class="bi bi-gear me-2"></i> Automation
-            </a>
-          </li>
-          <li>
-            <a href="{{ url_for('settings_logs') }}" class="nav-link text-white">
-              <i class="bi bi-journal-text me-2"></i> Logs
-            </a>
-          </li>
-          <li>
-            <a href="{{ url_for('records_drafts') }}" class="nav-link text-white">
-              <i class="bi bi-hourglass-split me-2"></i> Drafts
-            </a>
-          </li>
-          <li>
-            <a href="{{ url_for('records_replies') }}" class="nav-link text-white">
-              <i class="bi bi-chat-left-text me-2"></i> Records
-            </a>
-          </li>
-          <li>
-            <a href="{{ url_for('settings_ai') }}" class="nav-link text-white">
-              <i class="bi bi-robot me-2"></i> AI Settings
-            </a>
-          </li>
-          <li>
-            <a href="{{ url_for('settings_media') }}" class="nav-link text-white">
-              <i class="bi bi-image me-2"></i> Media
-            </a>
-          </li>
-          <li>
-            <a href="{{ url_for('settings_safety') }}" class="nav-link text-white">
-              <i class="bi bi-shield-check me-2"></i> Safety
-            </a>
-          </li>
-        </ul>
-        <div class="mt-auto pt-3 border-top">
-          <div class="small text-muted mb-2">{{ session.get('user_email', 'User') }}</div>
-          <a href="{{ url_for('logout') }}" class="btn btn-outline-light btn-sm w-100">
-            <i class="bi bi-box-arrow-right me-1"></i> Logout
-          </a>
-        </div>
-      </nav>
-      <main class="flex-grow-1 p-4">
-        <div class="page-narrow-wide">
-          {% with messages = get_flashed_messages(with_categories=true) %}
-            {% if messages %}
-              {% for category, message in messages %}
-                <div class="alert alert-{{ category }} alert-dismissible fade show" role="alert">
-                  {{ message }}
-                  <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
-                </div>
-              {% endfor %}
-            {% endif %}
-          {% endwith %}
-
-          <h2 class="mb-4">Keywords & Filters</h2>
+KEYWORDS_BODY = """
+<div class="page-narrow-wide">
+<h2 class="mb-4">Keywords & Filters</h2>
 
           {% if config_error %}
             <div class="alert alert-danger">{{ config_error }}</div>
@@ -1136,110 +922,10 @@ KEYWORDS_TEMPLATE = """
             </div>
           </form>
         </div>
-      </main>
-    </div>
-    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
-    <script>
-      function toggleSidebar() {
-        var sidebar = document.querySelector('.sidebar');
-        if (sidebar) {
-          sidebar.classList.toggle('sidebar-open');
-        }
-      }
-    </script>
-  </body>
-</html>
 """
 
-
-LOGS_TEMPLATE = """
-<!doctype html>
-<html lang="en">
-  <head>
-    <meta charset="utf-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>Logs - X Bot</title>
-    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
-    <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.css" rel="stylesheet">
-    <link href="{{ url_for('static', filename='style.css') }}" rel="stylesheet">
-  </head>
-  <body>
-    <div class="mobile-topbar px-3 py-2 d-md-none">
-      <button class="btn btn-outline-light btn-sm" type="button" onclick="toggleSidebar()">
-        <i class="bi bi-list" id="navToggleIcon"></i>
-      </button>
-      <span class="fw-semibold">X Bot</span>
-    </div>
-    <div class="d-flex">
-      <nav class="sidebar text-white">
-        <div class="brand">
-          <div class="brand-mark">DG</div>
-          <div class="brand-text">
-            <strong>Dr G</strong>
-            <span>Control center</span>
-          </div>
-        </div>
-        <ul class="nav nav-pills flex-column mb-auto">
-          <li class="nav-item">
-            <a href="{{ url_for('dashboard_overview') }}" class="nav-link text-white">
-              <i class="bi bi-speedometer2 me-2"></i> Overview
-            </a>
-          </li>
-          <li>
-            <a href="{{ url_for('settings_keywords') }}" class="nav-link text-white">
-              <i class="bi bi-filter-circle me-2"></i> Keywords & Filters
-            </a>
-          </li>
-          <li>
-            <a href="{{ url_for('settings_credentials') }}" class="nav-link text-white">
-              <i class="bi bi-person-badge me-2"></i> Credentials
-            </a>
-          </li>
-          <li>
-            <a href="{{ url_for('settings_automation') }}" class="nav-link text-white">
-              <i class="bi bi-gear me-2"></i> Automation
-            </a>
-          </li>
-          <li>
-            <a href="{{ url_for('settings_logs') }}" class="nav-link text-white active">
-              <i class="bi bi-journal-text me-2"></i> Logs
-            </a>
-          </li>
-          <li>
-            <a href="{{ url_for('records_drafts') }}" class="nav-link text-white">
-              <i class="bi bi-hourglass-split me-2"></i> Drafts
-            </a>
-          </li>
-          <li>
-            <a href="{{ url_for('records_replies') }}" class="nav-link text-white">
-              <i class="bi bi-chat-left-text me-2"></i> Records
-            </a>
-          </li>
-          <li>
-            <a href="{{ url_for('settings_ai') }}" class="nav-link text-white">
-              <i class="bi bi-robot me-2"></i> AI Settings
-            </a>
-          </li>
-          <li>
-            <a href="{{ url_for('settings_media') }}" class="nav-link text-white">
-              <i class="bi bi-image me-2"></i> Media
-            </a>
-          </li>
-          <li>
-            <a href="{{ url_for('settings_safety') }}" class="nav-link text-white">
-              <i class="bi bi-shield-check me-2"></i> Safety
-            </a>
-          </li>
-        </ul>
-        <div class="mt-auto pt-3 border-top">
-          <div class="small text-muted mb-2">{{ session.get('user_email', 'User') }}</div>
-          <a href="{{ url_for('logout') }}" class="btn btn-outline-light btn-sm w-100">
-            <i class="bi bi-box-arrow-right me-1"></i> Logout
-          </a>
-        </div>
-      </nav>
-      <main class="flex-grow-1 p-4">
-        <h2 class="mb-4">Bot Logs</h2>
+LOGS_BODY = """
+<h2 class="mb-4">Bot Logs</h2>
         {% if log_error %}
         <div class="alert alert-warning">{{ log_error }}</div>
         {% else %}
@@ -1253,26 +939,136 @@ LOGS_TEMPLATE = """
           <a href="{{ url_for('settings_logs') }}" class="btn btn-outline-secondary btn-sm"><i class="bi bi-arrow-clockwise me-1"></i>Refresh</a>
         </div>
         {% endif %}
-      </main>
-    </div>
-    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
-    <script>
-      function toggleSidebar() {
-        var sidebar = document.querySelector('.sidebar');
-        var icon = document.getElementById('navToggleIcon');
-        if (sidebar) {
-          var isOpen = sidebar.classList.toggle('sidebar-open');
-          if (icon) {
-            icon.classList.toggle('bi-list', !isOpen);
-            icon.classList.toggle('bi-x-lg', isOpen);
-          }
-        }
-      }
-    </script>
-  </body>
-</html>
 """
 
+CREDENTIALS_BODY = """
+<div class="page-narrow">
+<h2 class="mb-4">Connect Twitter & Gemini</h2>
+
+          {% if config_error %}
+            <div class="alert alert-danger">{{ config_error }}</div>
+          {% endif %}
+
+          {% if is_connected and connected_user %}
+          <div class="alert alert-success d-flex justify-content-between align-items-center mb-4">
+            <div>
+              <strong>Connected as @{{ connected_user.get('username') }}</strong><br>
+              <span class="small">Followers: {{ connected_user.get('followers_count', 'N/A') }}</span>
+            </div>
+            <form method="post" style="display: inline;">
+              <input type="hidden" name="disconnect" value="1">
+              <button type="submit" class="btn btn-outline-danger btn-sm" onclick="return confirm('Are you sure you want to disconnect your Twitter account?')">
+                <i class="bi bi-x-circle me-1"></i>Disconnect
+              </button>
+            </form>
+          </div>
+          {% endif %}
+
+          <form method="post" class="row g-3">
+            <div class="col-12">
+              <h5>Twitter / X API (OAuth 1.0a)</h5>
+              <p class="small text-muted mb-0">
+                Use <strong>Keys and tokens</strong>: API Key (= Consumer Key), API Key Secret (= Consumer Secret),
+                Access Token, Access Token Secret. Optional Bearer Token for app-only reads.
+                Do <strong>not</strong> use OAuth 2.0 Client ID / Client Secret here.
+              </p>
+            </div>
+            <div class="col-md-6">
+              <label class="form-label">API Key / Consumer Key</label>
+              <input type="password" name="consumer_key" class="form-control" placeholder="{{ '••••••••' if x_api.get('consumer_key') else '' }}" autocomplete="off">
+              <small class="text-muted">Leave blank to keep existing</small>
+            </div>
+            <div class="col-md-6">
+              <label class="form-label">API Key Secret / Consumer Secret</label>
+              <input type="password" name="consumer_secret" class="form-control" placeholder="{{ '••••••••' if x_api.get('consumer_secret') else '' }}" autocomplete="off">
+            </div>
+            <div class="col-md-6">
+              <label class="form-label">Access Token (user context)</label>
+              <input type="password" name="access_token" class="form-control" placeholder="{{ '••••••••' if x_api.get('access_token') else '' }}" autocomplete="off">
+            </div>
+            <div class="col-md-6">
+              <label class="form-label">Access Token Secret</label>
+              <input type="password" name="access_token_secret" class="form-control" placeholder="{{ '••••••••' if x_api.get('access_token_secret') else '' }}" autocomplete="off">
+            </div>
+            <div class="col-md-6">
+              <label class="form-label">Bearer Token (optional, app-only)</label>
+              <input type="password" name="bearer_token" class="form-control" placeholder="{{ '••••••••' if x_api.get('bearer_token') else '' }}" autocomplete="off">
+            </div>
+
+            <div class="col-12 mt-4">
+              <h5>AI Providers</h5>
+              <p class="text-muted small mb-2">Leave API key blank to keep the existing key. Manage niches/system prompts under AI Settings.</p>
+            </div>
+            <div class="col-md-6">
+              <label class="form-label">Gemini API Key</label>
+              <input type="password" name="gemini_api_key" class="form-control" placeholder="{{ '••••••••' if gemini.get('api_key') else '' }}" autocomplete="off">
+            </div>
+            <div class="col-md-3 d-flex align-items-end">
+              <div class="form-check">
+                <input class="form-check-input" type="checkbox" name="gemini_enabled" id="gemini_enabled" {% if gemini.get('enabled') %}checked{% endif %}>
+                <label class="form-check-label" for="gemini_enabled">Enable Gemini</label>
+              </div>
+            </div>
+            <div class="col-md-6">
+              <label class="form-label">OpenAI API Key</label>
+              <input type="password" name="openai_api_key" class="form-control" placeholder="{{ '••••••••' if openai.get('api_key') else '' }}" autocomplete="off">
+            </div>
+            <div class="col-md-3 d-flex align-items-end">
+              <div class="form-check">
+                <input class="form-check-input" type="checkbox" name="openai_enabled" id="openai_enabled" {% if openai.get('enabled') %}checked{% endif %}>
+                <label class="form-check-label" for="openai_enabled">Enable OpenAI</label>
+              </div>
+            </div>
+            <div class="col-md-6">
+              <label class="form-label">Anthropic API Key</label>
+              <input type="password" name="anthropic_api_key" class="form-control" placeholder="{{ '••••••••' if anthropic.get('api_key') else '' }}" autocomplete="off">
+            </div>
+            <div class="col-md-3 d-flex align-items-end">
+              <div class="form-check">
+                <input class="form-check-input" type="checkbox" name="anthropic_enabled" id="anthropic_enabled" {% if anthropic.get('enabled') %}checked{% endif %}>
+                <label class="form-check-label" for="anthropic_enabled">Enable Anthropic</label>
+              </div>
+            </div>
+            <div class="col-12 mt-2">
+              <h6 class="mb-1">AgentRouter <span class="text-muted small">(agentrouter.org)</span></h6>
+              <p class="text-muted small mb-2">
+                OpenAI-compatible gateway. Get a key at
+                <a href="https://agentrouter.org/console/token" target="_blank" rel="noopener">agentrouter.org/console/token</a>.
+                Base URL defaults to <code>https://agentrouter.org/v1</code>.
+              </p>
+            </div>
+            <div class="col-md-6">
+              <label class="form-label">AgentRouter API Key</label>
+              <input type="password" name="agentrouter_api_key" class="form-control" placeholder="{{ '••••••••' if agentrouter.get('api_key') else '' }}" autocomplete="off">
+            </div>
+            <div class="col-md-3 d-flex align-items-end">
+              <div class="form-check">
+                <input class="form-check-input" type="checkbox" name="agentrouter_enabled" id="agentrouter_enabled" {% if agentrouter.get('enabled') %}checked{% endif %}>
+                <label class="form-check-label" for="agentrouter_enabled">Enable AgentRouter</label>
+              </div>
+            </div>
+            <div class="col-md-6">
+              <label class="form-label">AgentRouter base URL</label>
+              <input type="text" name="agentrouter_base_url" class="form-control" value="{{ agentrouter.get('base_url') or 'https://agentrouter.org/v1' }}" placeholder="https://agentrouter.org/v1">
+            </div>
+            <div class="col-md-4">
+              <label class="form-label">Default AI Provider</label>
+              <select name="ai_provider" class="form-select">
+                <option value="gemini" {% if ai.get('provider') == 'gemini' %}selected{% endif %}>Gemini</option>
+                <option value="openai" {% if ai.get('provider') == 'openai' %}selected{% endif %}>OpenAI</option>
+                <option value="anthropic" {% if ai.get('provider') == 'anthropic' %}selected{% endif %}>Anthropic</option>
+                <option value="agentrouter" {% if ai.get('provider') == 'agentrouter' %}selected{% endif %}>AgentRouter</option>
+              </select>
+            </div>
+
+            <div class="col-12 mt-4">
+              <button type="submit" class="btn btn-primary">
+                <i class="bi bi-link-45deg me-1"></i> Save & Test Connection
+              </button>
+            </div>
+          </form>
+        </div>
+"""
 
 # Start Telegram MITL poller (no-op if token/chat not set)
 try:
@@ -1370,12 +1166,14 @@ def settings_logs():
     """View last lines of bot.log."""
     log_path = Path("bot.log")
     log_content, line_count, log_error = _read_log_tail(log_path, max_lines=500)
-    return render_template_string(
-        LOGS_TEMPLATE,
+    body = render_template_string(
+        LOGS_BODY,
         log_content=log_content,
         line_count=line_count,
         log_error=log_error,
     )
+    return render_admin("Logs", "logs", body)
+
 
 
 @app.route("/dashboard")
@@ -1675,12 +1473,18 @@ def settings_credentials():
             ("gemini", "gemini_api_key"),
             ("openai", "openai_api_key"),
             ("anthropic", "anthropic_api_key"),
+            ("agentrouter", "agentrouter_api_key"),
         ):
             data.setdefault(provider, {})
             key_val = request.form.get(form_key, "").strip()
             if key_val:
                 data[provider]["api_key"] = key_val
             data[provider]["enabled"] = bool(request.form.get(f"{provider}_enabled"))
+
+        data.setdefault("agentrouter", {})
+        ar_base = request.form.get("agentrouter_base_url", "").strip()
+        if ar_base:
+            data["agentrouter"]["base_url"] = ar_base.rstrip("/")
 
         Path(config.config_path).write_text(
             json.dumps(data, indent=2), encoding="utf-8"
@@ -1716,6 +1520,7 @@ def settings_credentials():
     gemini = config.config.get("gemini", {}) if config else {}
     openai_cfg = config.config.get("openai", {}) if config else {}
     anthropic = config.config.get("anthropic", {}) if config else {}
+    agentrouter = config.config.get("agentrouter", {}) if config else {}
     ai = config.config.get("ai", {}) if config else {}
     
     # Check if Twitter is connected
@@ -1730,17 +1535,20 @@ def settings_credentials():
         except Exception:
             is_connected = False
 
-    return render_template_string(
-        CREDENTIALS_TEMPLATE,
+    body = render_template_string(
+        CREDENTIALS_BODY,
         config_error=error,
         x_api=x_api,
         gemini=gemini,
         openai=openai_cfg,
         anthropic=anthropic,
+        agentrouter=agentrouter,
         ai=ai,
         is_connected=is_connected,
         connected_user=connected_user,
     )
+    return render_admin("Credentials", "credentials", body)
+
 
 
 @app.route("/settings/keywords", methods=["GET", "POST"])
@@ -1841,13 +1649,14 @@ def settings_keywords():
             reply_settings = config.get_reply_settings()
             filters = config.get_filters()
 
-            return render_template_string(
-                KEYWORDS_TEMPLATE,
+            body = render_template_string(
+                KEYWORDS_BODY,
                 config_error=error,
                 keywords="\n".join(keywords),
                 reply_settings=reply_settings,
                 filters=filters,
             )
+            return render_admin("Keywords", "keywords", body)
 
         # Default path: save settings
         if config:
@@ -1897,13 +1706,15 @@ def settings_keywords():
         reply_settings = config.get_reply_settings()
         filters = config.get_filters()
 
-    return render_template_string(
-        KEYWORDS_TEMPLATE,
+    body = render_template_string(
+        KEYWORDS_BODY,
         config_error=error,
         keywords="\n".join(keywords),
         reply_settings=reply_settings,
         filters=filters,
     )
+    return render_admin("Keywords", "keywords", body)
+
 
 
 def _run_bot_in_thread():
@@ -2133,8 +1944,8 @@ def settings_automation():
     
     preview = session.pop("last_preview", None)
     
-    return render_template_string(
-        AUTOMATION_TEMPLATE,
+    body = render_template_string(
+        AUTOMATION_BODY,
         config_error=error,
         schedule=schedule,
         reply_settings=reply_settings,
@@ -2145,6 +1956,8 @@ def settings_automation():
         next_run=next_run,
         preview=preview,
     )
+    return render_admin("Automation", "automation", body)
+
 
 
 RECORDS_SHELL = ADMIN_SHELL
@@ -2619,6 +2432,7 @@ def settings_ai():
                 <option value="gemini" {% if ai.get('provider')=='gemini' %}selected{% endif %}>Gemini</option>
                 <option value="openai" {% if ai.get('provider')=='openai' %}selected{% endif %}>OpenAI</option>
                 <option value="anthropic" {% if ai.get('provider')=='anthropic' %}selected{% endif %}>Anthropic</option>
+                <option value="agentrouter" {% if ai.get('provider')=='agentrouter' %}selected{% endif %}>AgentRouter</option>
               </select>
             </div>
             <div class="col-md-4">
