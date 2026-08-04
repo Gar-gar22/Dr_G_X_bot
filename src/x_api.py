@@ -7,6 +7,27 @@ import tweepy
 logger = logging.getLogger(__name__)
 
 
+def _format_x_error(exc: BaseException) -> str:
+    """Human-readable X/Tweepy error (includes Free-tier hints)."""
+    msg = str(exc)
+    low = msg.lower()
+    if "402" in msg or "payment required" in low:
+        return (
+            f"{msg} — X Free tier does not include search. "
+            "Upgrade to Basic+ or skip search and post directly."
+        )
+    if "403" in msg or "453" in msg or "access level" in low:
+        return (
+            f"{msg} — endpoint not available on your X API access level "
+            "(Free usually allows create tweet / media, not search or home timeline)."
+        )
+    if "404" in msg:
+        return (
+            f"{msg} — often a retired v1.1 endpoint; posting must use API v2 create_tweet."
+        )
+    return msg
+
+
 class XAPI:
     """Handles all interactions with X (Twitter) API."""
     
@@ -15,6 +36,7 @@ class XAPI:
         self.client = None
         self.api = None
         self.user_id = None
+        self.last_error: Optional[str] = None
         self._authenticate(credentials)
     
     def _authenticate(self, credentials: Dict[str, str]) -> None:
@@ -86,7 +108,8 @@ class XAPI:
             return result
         
         except Exception as e:
-            logger.error(f"Error fetching home timeline: {e}")
+            self.last_error = _format_x_error(e)
+            logger.error(f"Error fetching home timeline: {self.last_error}")
             return []
 
     def get_user_tweets(self, count: int = 3200) -> List[Dict[str, Any]]:
@@ -217,6 +240,7 @@ class XAPI:
     
     def search_tweets(self, query: str, count: int = 20) -> List[Dict[str, Any]]:
         """Search for tweets matching a query."""
+        self.last_error = None
         try:
             # Use API v2 for search
             tweets = self.client.search_recent_tweets(
@@ -256,7 +280,8 @@ class XAPI:
             return result
         
         except Exception as e:
-            logger.error(f"Error searching tweets for '{query}': {e}")
+            self.last_error = _format_x_error(e)
+            logger.error(f"Error searching tweets for '{query}': {self.last_error}")
             return []
     
     def upload_media(self, file_path: str) -> Optional[str]:
@@ -285,64 +310,65 @@ class XAPI:
         in_reply_to_tweet_id: str,
         media_ids: Optional[list] = None,
     ) -> Optional[str]:
-        """Post a reply to a tweet (optionally with images)."""
+        """Post a reply to a tweet (optionally with images) via API v2."""
+        self.last_error = None
         try:
+            if not self.client:
+                self.last_error = "X API v2 client not configured"
+                return None
             kwargs = {
-                "status": text,
-                "in_reply_to_status_id": in_reply_to_tweet_id,
-                "auto_populate_reply_metadata": True,
+                "text": text,
+                "in_reply_to_tweet_id": str(in_reply_to_tweet_id),
             }
             if media_ids:
                 kwargs["media_ids"] = [str(m) for m in media_ids[:4]]
-            status = self.api.update_status(**kwargs)
-            reply_id = str(status.id)
-            logger.info(f"Posted reply {reply_id} to tweet {in_reply_to_tweet_id}")
-            return reply_id
+            response = self.client.create_tweet(**kwargs)
+            if response and response.data:
+                reply_id = str(response.data["id"])
+                logger.info(f"Posted reply {reply_id} to tweet {in_reply_to_tweet_id}")
+                return reply_id
+            self.last_error = "X API v2 create_tweet returned no data"
+            return None
 
         except tweepy.TooManyRequests:
-            logger.warning("Rate limit exceeded. Waiting...")
-            time.sleep(900)
+            self.last_error = "rate_limited"
+            logger.warning("Rate limit exceeded while posting reply")
             return None
         except Exception as e:
-            logger.error(f"Error posting reply: {e}")
+            self.last_error = _format_x_error(e)
+            logger.error(f"Error posting reply: {self.last_error}")
             return None
 
     def post_tweet(self, text: str, media_ids: Optional[list] = None) -> Optional[str]:
-        """Post an original tweet (optionally with images)."""
+        """Post an original tweet via API v2 only (v1.1 statuses/update is retired → 404)."""
+        self.last_error = None
         try:
+            if not self.client:
+                self.last_error = "X API v2 client not configured"
+                logger.error(self.last_error)
+                return None
+
             media_ids = [str(m) for m in (media_ids or [])[:4]] or None
-
-            if self.client:
-                try:
-                    kwargs = {"text": text}
-                    if media_ids:
-                        kwargs["media_ids"] = media_ids
-                    response = self.client.create_tweet(**kwargs)
-                    if response and response.data:
-                        tweet_id = str(response.data["id"])
-                        logger.info(f"Posted tweet {tweet_id} via API v2: {text[:50]}...")
-                        return tweet_id
-                except Exception as v2_error:
-                    logger.warning(f"API v2 failed, trying v1.1: {v2_error}")
-
-            if self.api:
-                kwargs = {"status": text}
-                if media_ids:
-                    kwargs["media_ids"] = media_ids
-                status = self.api.update_status(**kwargs)
-                tweet_id = str(status.id)
-                logger.info(f"Posted tweet {tweet_id} via API v1.1: {text[:50]}...")
+            kwargs = {"text": text}
+            if media_ids:
+                kwargs["media_ids"] = media_ids
+            response = self.client.create_tweet(**kwargs)
+            if response and response.data:
+                tweet_id = str(response.data["id"])
+                logger.info(f"Posted tweet {tweet_id} via API v2: {text[:50]}...")
                 return tweet_id
 
-            logger.error("No API client available for posting tweet")
+            self.last_error = "X API v2 create_tweet returned no data"
+            logger.error(self.last_error)
             return None
 
         except tweepy.TooManyRequests:
-            logger.warning("Rate limit exceeded. Waiting...")
-            time.sleep(900)
+            self.last_error = "rate_limited"
+            logger.warning("Rate limit exceeded while posting tweet")
             return None
         except Exception as e:
-            logger.error(f"Error posting tweet: {e}")
+            self.last_error = _format_x_error(e)
+            logger.error(f"Error posting tweet: {self.last_error}")
             return None
     
     def post_thread(self, tweet_texts: List[str]) -> Optional[List[str]]:
@@ -468,49 +494,32 @@ class XAPI:
     def quote_tweet(
         self, text: str, tweet_id: str, media_ids: Optional[list] = None
     ) -> Optional[str]:
-        """Post a quote tweet (optionally with images)."""
+        """Post a quote tweet via API v2 only."""
+        self.last_error = None
         try:
+            if not self.client:
+                self.last_error = "X API v2 client not configured"
+                return None
             media_ids = [str(m) for m in (media_ids or [])[:4]] or None
-
-            if self.client:
-                try:
-                    kwargs = {"text": text, "quote_tweet_id": tweet_id}
-                    if media_ids:
-                        kwargs["media_ids"] = media_ids
-                    response = self.client.create_tweet(**kwargs)
-                    if response and response.data:
-                        quote_id = str(response.data["id"])
-                        logger.info(
-                            f"Posted quote tweet {quote_id} via API v2 quoting tweet {tweet_id}"
-                        )
-                        return quote_id
-                except Exception as v2_error:
-                    logger.warning(f"API v2 quote tweet failed, trying v1.1: {v2_error}")
-
-            if self.api:
-                tweet_url = f"https://twitter.com/i/web/status/{tweet_id}"
-                max_text_len = 280 - len(tweet_url) - 1
-                if len(text) > max_text_len:
-                    text = text[: max_text_len - 3] + "..."
-                quote_text = f"{text} {tweet_url}"
-                kwargs = {"status": quote_text}
-                if media_ids:
-                    kwargs["media_ids"] = media_ids
-                status = self.api.update_status(**kwargs)
-                quote_id = str(status.id)
+            kwargs = {"text": text, "quote_tweet_id": str(tweet_id)}
+            if media_ids:
+                kwargs["media_ids"] = media_ids
+            response = self.client.create_tweet(**kwargs)
+            if response and response.data:
+                quote_id = str(response.data["id"])
                 logger.info(
-                    f"Posted quote tweet {quote_id} via API v1.1 quoting tweet {tweet_id}"
+                    f"Posted quote tweet {quote_id} via API v2 quoting tweet {tweet_id}"
                 )
                 return quote_id
-
-            logger.error("No API client available for posting quote tweet")
+            self.last_error = "X API v2 create_tweet returned no data"
             return None
         except tweepy.TooManyRequests:
-            logger.warning("Rate limit exceeded. Waiting...")
-            time.sleep(900)
+            self.last_error = "rate_limited"
+            logger.warning("Rate limit exceeded while quoting")
             return None
         except Exception as e:
-            logger.error(f"Error posting quote tweet: {e}")
+            self.last_error = _format_x_error(e)
+            logger.error(f"Error posting quote tweet: {self.last_error}")
             return None
     
     def get_user_info(self) -> Dict[str, Any]:

@@ -213,53 +213,70 @@ def resolve_provider_config(
 
     if db is not None:
         try:
+            # Prefer live env OpenAI key over a stale DB token (e.g. old gateway key).
+            env_openai_key = os.getenv("OPENAI_API_KEY")
+
             if preferred:
                 row = db.get_ai_provider(preferred)
-                if row and row.get("enabled") and row.get("api_key"):
+                if row and row.get("enabled") and (row.get("api_key") or env_openai_key):
                     prov = row["provider"]
                     if prov in ("agentrouter", "agent_router"):
                         openai_row = db.get_ai_provider("openai")
-                        if openai_row and openai_row.get("api_key"):
+                        key = env_openai_key or (
+                            (openai_row or {}).get("api_key") if openai_row else None
+                        )
+                        if key:
                             return (
                                 "openai",
-                                openai_row["api_key"],
-                                openai_row.get("model") or OPENAI_DEFAULT_MODEL,
+                                key,
+                                normalize_openai_model(
+                                    (openai_row or {}).get("model") or OPENAI_DEFAULT_MODEL
+                                ),
                                 temperature,
                             )
                         preferred = "openai"
                     else:
                         model = row.get("model")
+                        key = row.get("api_key")
                         if prov == "openai":
                             model = normalize_openai_model(model)
-                        return (
-                            prov,
-                            row["api_key"],
-                            model,
-                            temperature,
-                        )
+                            key = env_openai_key or key
+                        if key:
+                            return (
+                                prov,
+                                key,
+                                model,
+                                temperature,
+                            )
             row = db.get_default_ai_provider()
-            if row and row.get("api_key"):
+            if row and (row.get("api_key") or env_openai_key):
                 if row["provider"] in ("agentrouter", "agent_router"):
                     openai_row = db.get_ai_provider("openai")
-                    if openai_row and openai_row.get("api_key"):
+                    key = env_openai_key or (
+                        (openai_row or {}).get("api_key") if openai_row else None
+                    )
+                    if key:
                         return (
                             "openai",
-                            openai_row["api_key"],
+                            key,
                             normalize_openai_model(
-                                openai_row.get("model") or OPENAI_DEFAULT_MODEL
+                                (openai_row or {}).get("model") or OPENAI_DEFAULT_MODEL
                             ),
                             temperature,
                         )
                 else:
                     model = row.get("model")
+                    key = row.get("api_key")
                     if row["provider"] == "openai":
                         model = normalize_openai_model(model)
-                    return (
-                        row["provider"],
-                        row["api_key"],
-                        model,
-                        temperature,
-                    )
+                        key = env_openai_key or key
+                    if key:
+                        return (
+                            row["provider"],
+                            key,
+                            model,
+                            temperature,
+                        )
         except Exception as e:
             logger.warning(f"Could not load AI provider from DB: {e}")
 

@@ -181,6 +181,23 @@ def _x_search_tweets(query: str, count: int = 10) -> str:
         return json.dumps({"error": "X API not configured"})
     count = max(1, min(int(count or 10), 25))
     tweets = CTX.x_api.search_tweets(query, count=count)
+    if not tweets and getattr(CTX.x_api, "last_error", None):
+        err = CTX.x_api.last_error
+        _record(
+            "x_search_tweets",
+            {"query": query, "count": count},
+            "safe",
+            "rejected",
+            result=err[:200],
+        )
+        return json.dumps(
+            {
+                "tweets": [],
+                "count": 0,
+                "error": err,
+                "hint": "On X Free tier, skip search and draft/post directly.",
+            }
+        )
     slim = [
         {
             "id": t.get("id"),
@@ -198,6 +215,17 @@ def _x_home_timeline(count: int = 15) -> str:
         return json.dumps({"error": "X API not configured"})
     count = max(1, min(int(count or 15), 40))
     tweets = CTX.x_api.get_home_timeline(count=count)
+    if not tweets and getattr(CTX.x_api, "last_error", None):
+        err = CTX.x_api.last_error
+        _record("x_home_timeline", {"count": count}, "safe", "rejected", result=err[:200])
+        return json.dumps(
+            {
+                "tweets": [],
+                "count": 0,
+                "error": err,
+                "hint": "Home timeline is not available on X Free tier.",
+            }
+        )
     slim = [
         {
             "id": t.get("id"),
@@ -298,27 +326,41 @@ def _gated_write(tool_name: str, args: dict, kind: str, text: str, **kwargs) -> 
         posted_id = None
         if tool_name == "x_tweet":
             posted_id = CTX.x_api.post_tweet(text)
-            if posted_id:
-                CTX.db.mark_tweet_posted(str(posted_id), text)
+            if posted_id and CTX.db:
+                try:
+                    CTX.db.mark_tweet_posted(str(posted_id), text)
+                except Exception as e:
+                    logger.warning(f"mark_tweet_posted failed: {e}")
         elif tool_name == "x_reply":
             tid = kwargs.get("target_tweet_id")
             posted_id = CTX.x_api.post_reply(text, tid)
-            if posted_id:
-                CTX.db.mark_tweet_replied(tid, str(posted_id), source="agent")
+            if posted_id and CTX.db:
+                try:
+                    CTX.db.mark_tweet_replied(tid, str(posted_id), source="agent")
+                except Exception as e:
+                    logger.warning(f"mark_tweet_replied failed: {e}")
         elif tool_name == "x_quote":
             tid = kwargs.get("target_tweet_id")
             posted_id = CTX.x_api.quote_tweet(text, tid)
-            if posted_id:
-                CTX.db.mark_quote_retweet_posted(str(posted_id), tid, text)
+            if posted_id and CTX.db:
+                try:
+                    CTX.db.mark_quote_retweet_posted(str(posted_id), tid, text)
+                except Exception as e:
+                    logger.warning(f"mark_quote_retweet_posted failed: {e}")
         elif tool_name == "x_thread":
             texts = kwargs.get("thread_texts") or []
             ids = CTX.x_api.post_thread(texts)
             if ids:
-                CTX.db.mark_thread_posted(ids, texts)
+                if CTX.db:
+                    try:
+                        CTX.db.mark_thread_posted(ids, texts)
+                    except Exception as e:
+                        logger.warning(f"mark_thread_posted failed: {e}")
                 posted_id = ids[0]
         if not posted_id:
-            _record(tool_name, args, "safe", "rejected", result="post_failed")
-            return json.dumps({"status": "error", "error": "X API returned no id"})
+            err = getattr(CTX.x_api, "last_error", None) or "X API returned no id"
+            _record(tool_name, args, "safe", "rejected", result=err[:300])
+            return json.dumps({"status": "error", "error": err})
         CTX.writes_this_turn += 1
         _record(
             tool_name,

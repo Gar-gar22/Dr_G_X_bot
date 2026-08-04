@@ -200,8 +200,9 @@ def run_orchestrator(
     notes: List[str] = []
     research_blob = ""
 
-    # --- Research specialist ---
-    if research_hints or post_hints:
+    # Research only when user clearly wants discovery — not on every "post a tweet"
+    # (X Free tier has no search/timeline; researching first only wastes turns).
+    if research_hints:
         try:
             research_agent = build_react_agent(build_read_tools(), RESEARCH_SYSTEM)
             r_state = research_agent.invoke(
@@ -211,7 +212,8 @@ def run_orchestrator(
                         HumanMessage(
                             content=(
                                 f"User request:\n{user_text}\n\n"
-                                "Gather relevant tweets with ids. Be concise."
+                                "Gather relevant tweets with ids. Be concise. "
+                                "If search/timeline tools return tier errors, say so and stop."
                             )
                         )
                     ]
