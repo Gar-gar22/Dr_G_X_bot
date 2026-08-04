@@ -589,6 +589,26 @@ class Database:
                       )
                     """
                 )
+            # Remap leftover AgentRouter model ids stored under openai
+            cursor.execute(
+                """
+                UPDATE ai_provider_settings
+                SET model = 'gpt-4o-mini'
+                WHERE provider = 'openai'
+                  AND (
+                    model IS NULL
+                    OR model = ''
+                    OR model IN (
+                      'gpt-5.6-sol',
+                      'gpt-5.6',
+                      'claude-opus-4-8',
+                      'claude-opus-5',
+                      'claude-opus-4'
+                    )
+                    OR model LIKE '%%-sol'
+                  )
+                """
+            )
             # Migrate retired / new-user-blocked Gemini model ids
             cursor.execute(
                 """

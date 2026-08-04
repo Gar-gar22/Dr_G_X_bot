@@ -8,6 +8,8 @@ logger = logging.getLogger(__name__)
 
 GEMINI_DEFAULT_MODEL = "gemini-3.5-flash"
 OPENAI_DEFAULT_MODEL = "gpt-4o-mini"
+# Agent / tool-calling default (cheap + reliable function calling on api.openai.com)
+OPENAI_AGENT_MODEL = "gpt-4o-mini"
 # Retired / restricted Gemini model ids → current Flash
 _GEMINI_MODEL_ALIASES = {
     "gemini-pro": GEMINI_DEFAULT_MODEL,
@@ -23,11 +25,39 @@ _GEMINI_MODEL_ALIASES = {
     "gemini-2.5-pro": GEMINI_DEFAULT_MODEL,
     "gemini-3-flash-preview": GEMINI_DEFAULT_MODEL,
 }
+# Leftover AgentRouter (and similar) ids → real OpenAI models
+_OPENAI_MODEL_ALIASES = {
+    "gpt-5.6-sol": OPENAI_AGENT_MODEL,
+    "gpt-5.6": OPENAI_AGENT_MODEL,
+    "claude-opus-4-8": "gpt-4o",
+    "claude-opus-5": "gpt-4o",
+    "claude-opus-4": "gpt-4o",
+}
 
 
 def normalize_gemini_model(model: Optional[str]) -> str:
     name = (model or "").strip() or GEMINI_DEFAULT_MODEL
     return _GEMINI_MODEL_ALIASES.get(name, name)
+
+
+def normalize_openai_model(model: Optional[str], *, for_agent: bool = False) -> str:
+    """
+    Resolve an OpenAI chat model id.
+    Remaps AgentRouter leftovers; defaults to gpt-4o-mini for tool-calling agents.
+    """
+    name = (model or "").strip()
+    if not name:
+        return OPENAI_AGENT_MODEL if for_agent else OPENAI_DEFAULT_MODEL
+    mapped = _OPENAI_MODEL_ALIASES.get(name)
+    if mapped:
+        logger.warning("Remapping non-OpenAI model %r → %r", name, mapped)
+        return mapped
+    # Heuristic: AgentRouter-style ids that can't do /v1/chat/completions tools
+    lower = name.lower()
+    if lower.endswith("-sol") or "agentrouter" in lower:
+        logger.warning("Remapping unsupported model %r → %r", name, OPENAI_AGENT_MODEL)
+        return OPENAI_AGENT_MODEL
+    return name
 
 
 class AIProvider(ABC):
@@ -108,7 +138,7 @@ class OpenAIProvider(AIProvider):
         max_tokens: int = 400,
     ) -> str:
         response = self.client.chat.completions.create(
-            model=model or OPENAI_DEFAULT_MODEL,
+            model=normalize_openai_model(model),
             temperature=temperature,
             max_tokens=max_tokens,
             messages=[
@@ -198,10 +228,13 @@ def resolve_provider_config(
                             )
                         preferred = "openai"
                     else:
+                        model = row.get("model")
+                        if prov == "openai":
+                            model = normalize_openai_model(model)
                         return (
                             prov,
                             row["api_key"],
-                            row.get("model"),
+                            model,
                             temperature,
                         )
             row = db.get_default_ai_provider()
@@ -212,14 +245,19 @@ def resolve_provider_config(
                         return (
                             "openai",
                             openai_row["api_key"],
-                            openai_row.get("model") or OPENAI_DEFAULT_MODEL,
+                            normalize_openai_model(
+                                openai_row.get("model") or OPENAI_DEFAULT_MODEL
+                            ),
                             temperature,
                         )
                 else:
+                    model = row.get("model")
+                    if row["provider"] == "openai":
+                        model = normalize_openai_model(model)
                     return (
                         row["provider"],
                         row["api_key"],
-                        row.get("model"),
+                        model,
                         temperature,
                     )
         except Exception as e:
@@ -238,10 +276,8 @@ def resolve_provider_config(
         gemini_enabled = True
 
     name = (preferred or "").lower()
-    openai_model = (
-        os.getenv("OPENAI_MODEL")
-        or (config.get("openai") or {}).get("model")
-        or OPENAI_DEFAULT_MODEL
+    openai_model = normalize_openai_model(
+        os.getenv("OPENAI_MODEL") or (config.get("openai") or {}).get("model")
     )
     if name == "openai" and openai_key:
         return "openai", openai_key, openai_model, temperature

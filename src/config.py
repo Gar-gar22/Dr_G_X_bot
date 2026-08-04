@@ -237,10 +237,20 @@ class Config:
             self.config["openai"]["api_key"] = os.getenv("OPENAI_API_KEY")
             self.config["openai"]["enabled"] = True
         openai_base = (os.getenv("OPENAI_BASE_URL") or os.getenv("OPENAI_API_BASE") or "").strip()
-        if openai_base and "agentrouter.org" not in openai_base.lower():
-            self.config["openai"]["base_url"] = openai_base
-        if os.getenv("OPENAI_MODEL"):
-            self.config["openai"]["model"] = os.getenv("OPENAI_MODEL")
+        base_l = openai_base.lower()
+        if openai_base and "agentrouter.org" not in base_l and "trycloudflare.com" not in base_l:
+            if "api.openai.com" in base_l or "openai.azure.com" in base_l:
+                self.config["openai"]["base_url"] = openai_base
+            else:
+                self.config["openai"].pop("base_url", None)
+        else:
+            self.config["openai"].pop("base_url", None)
+        if os.getenv("OPENAI_MODEL") or self.config["openai"].get("model"):
+            from .ai_provider import normalize_openai_model
+
+            self.config["openai"]["model"] = normalize_openai_model(
+                os.getenv("OPENAI_MODEL") or self.config["openai"].get("model")
+            )
 
         self.config.setdefault("anthropic", {})
         if os.getenv("ANTHROPIC_API_KEY"):

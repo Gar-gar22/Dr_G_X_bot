@@ -55,12 +55,12 @@ def _chat_model():
 
     if provider == "openai":
         from langchain_openai import ChatOpenAI
+        from ..ai_provider import normalize_openai_model
 
         api_key = _openai_key()
-        model_name = (
-            (cfg_dict.get("openai") or {}).get("model")
-            or os.getenv("OPENAI_MODEL")
-            or "gpt-4o-mini"
+        model_name = normalize_openai_model(
+            (cfg_dict.get("openai") or {}).get("model") or os.getenv("OPENAI_MODEL"),
+            for_agent=True,
         )
         if not api_key:
             raise RuntimeError("OpenAI selected but OPENAI_API_KEY is missing")
@@ -75,9 +75,18 @@ def _chat_model():
             or (cfg_dict.get("openai") or {}).get("base_url")
             or ""
         ).strip()
-        # Ignore leftover AgentRouter hosts; use official OpenAI by default.
-        if base and "agentrouter.org" not in base.lower():
-            kwargs["base_url"] = base.rstrip("/")
+        # Ignore leftover AgentRouter / tunnel hosts; use official OpenAI.
+        base_l = base.lower()
+        if base and "agentrouter.org" not in base_l and "trycloudflare.com" not in base_l:
+            # Only allow explicit OpenAI (or documented Azure) hosts for agents.
+            if "api.openai.com" in base_l or "openai.azure.com" in base_l:
+                kwargs["base_url"] = base.rstrip("/")
+            else:
+                logger.warning(
+                    "Ignoring non-OpenAI OPENAI_BASE_URL %r (agent needs api.openai.com)",
+                    base,
+                )
+        logger.info("Agent chat model: openai/%s", model_name)
         return ChatOpenAI(**kwargs)
 
     if provider == "anthropic":
